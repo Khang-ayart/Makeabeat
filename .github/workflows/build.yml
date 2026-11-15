@@ -29,10 +29,12 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
-
+      # Runner đã có sẵn Android SDK; chỉ cần đảm bảo có đúng NDK và CMake.
       - name: Install NDK and CMake
-        run: sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
+        run: |
+          SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "ndk;26.3.11579264" "cmake;3.22.1"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
