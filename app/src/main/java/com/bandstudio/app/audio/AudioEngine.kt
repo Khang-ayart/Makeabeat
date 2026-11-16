@@ -11,6 +11,7 @@ object AudioEngine {
         System.loadLibrary("bandaudio")
     }
 
+    // ---- Luồng âm thanh ----
     external fun create(): Boolean
     external fun destroy()
 
@@ -18,16 +19,27 @@ object AudioEngine {
     external fun start(): Boolean
     external fun stop()
 
+    // ---- Điều khiển ----
     external fun setBpm(bpm: Float)
-    external fun setPlaying(playing: Boolean)
     external fun setMetronome(enabled: Boolean)
+    external fun setTrackMix(track: Int, volume: Float, pan: Float, mute: Boolean, solo: Boolean)
 
-    external fun noteOn(note: Int, velocity: Int)
-    external fun noteOff(note: Int)
+    /** Gửi cả bài nhạc (định dạng mảng int, xem Project.encodeForEngine). Trả false nếu dữ liệu hỏng. */
+    external fun setSong(data: IntArray): Boolean
+
+    /** Phát từ tick [fromTick]. Có lặp hay không do bài nhạc (setSong) quyết định. */
+    external fun play(fromTick: Int)
+    external fun stopTransport()
+
+    /** Chạm phím / pad: [inst] là Instrument.id, [track] là chỉ số track trong mixer. */
+    external fun noteOn(inst: Int, track: Int, note: Int, velocity: Int)
+    external fun noteOff(track: Int, note: Int)
     external fun allNotesOff()
 
+    // ---- Trạng thái ----
     /** Vị trí hiện tại tính bằng phách (0.0 khi đang dừng). */
     external fun beatPosition(): Double
+    external fun isPlaying(): Boolean
 
     /** Độ trễ đầu ra ước tính (ms); -1 nếu chưa đo được. */
     external fun latencyMs(): Double

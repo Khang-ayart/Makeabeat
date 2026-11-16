@@ -2,18 +2,19 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace band {
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kBeatEpsilon = 1e-9;  // chống sai số số thực khi so sánh biên phách
-constexpr float kMasterGain = 0.7f;
+constexpr double kEps = 1e-9;  // chống sai số số thực ở biên phách / tick
+constexpr float kMasterGain = 0.8f;
 constexpr float kMinBpm = 20.0f;
 constexpr float kMaxBpm = 400.0f;
+constexpr float kGainSmooth = 0.002f;  // ~10 ms: kéo thanh trượt không bị "lạch tạch"
 
-// Cắt mềm: tránh vỡ tiếng khi nhiều nốt cộng lại. Đầu ra luôn nằm trong [-1, 1].
+// Cắt mềm: nhiều nốt cộng lại không vỡ tiếng. Đầu ra luôn nằm trong [-1, 1].
 inline float softClip(float x) noexcept {
     x = std::clamp(x, -1.0f, 1.0f);
     return 1.5f * x - 0.5f * x * x * x;
@@ -21,43 +22,55 @@ inline float softClip(float x) noexcept {
 
 }  // namespace
 
-SineTable::SineTable() {
-    for (int i = 0; i < kSize + 2; ++i) {
-        table_[i] = static_cast<float>(std::sin(2.0 * kPi * i / kSize));
+Song* decodeSong(const int32_t* d, int n) {
+    if (!d || n < 6 || d[0] != 1) return nullptr;
+    auto song = std::make_unique<Song>();
+    song->loop = d[1] != 0;
+    song->loopStart = std::max(0, d[2]);
+    song->loopEnd = std::max(0, d[3]);
+    song->length = std::max(0, d[4]);
+    const int tracks = d[5];
+    if (tracks < 0 || tracks > kMaxTracks) return nullptr;
+
+    int i = 6;
+    for (int t = 0; t < tracks; ++t) {
+        if (i + 2 > n) return nullptr;
+        const int inst = d[i++];
+        const int count = d[i++];
+        if (inst < 0 || inst >= kInstCount || count < 0 || static_cast<int64_t>(i) + 4LL * count > n) {
+            return nullptr;
+        }
+        TrackData& td = song->tracks[t];
+        td.inst = static_cast<Inst>(inst);
+        td.notes.reserve(static_cast<size_t>(count));
+        for (int k = 0; k < count; ++k, i += 4) {
+            Note nt;
+            nt.start = std::max(0, d[i]);
+            nt.dur = std::max(1, d[i + 1]);
+            nt.pitch = static_cast<uint8_t>(std::clamp(d[i + 2], 0, 127));
+            nt.vel = static_cast<uint8_t>(std::clamp(d[i + 3], 1, 127));
+            td.notes.push_back(nt);
+        }
+        std::stable_sort(td.notes.begin(), td.notes.end(),
+                         [](const Note& a, const Note& b) { return a.start < b.start; });
     }
-}
-
-void detail::Voice::start(int midiNote, int velocity, int sampleRate, uint64_t startOrder) {
-    const double sr = sampleRate;
-    const double freq = 440.0 * std::pow(2.0, (midiNote - 69) / 12.0);
-
-    active = true;
-    releasing = false;
-    note = midiNote;
-    order = startOrder;
-    phase = 0.0;
-    phaseInc = freq / sr;
-    gain = 0.18f * (static_cast<float>(std::clamp(velocity, 1, 127)) / 127.0f);
-    attack = 0.0f;
-    attackInc = static_cast<float>(1.0 / (0.003 * sr));  // 3 ms, tránh tiếng "bụp"
-    release = 1.0f;
-    releaseCoef = 0.0f;
-
-    // Nốt trầm ngân dài hơn nốt cao; họa âm cao tắt nhanh hơn.
-    const double tau = 1.6 * std::pow(2.0, -(midiNote - 60) / 24.0);
-    for (int h = 0; h < kHarmonics; ++h) {
-        env[h] = 1.0f;
-        decay[h] = static_cast<float>(std::exp(-1.0 / ((tau / (1.0 + 1.2 * h)) * sr)));
-    }
+    return song.release();
 }
 
 EngineCore::EngineCore() {
+    current_ = new Song();
     prepare(sampleRate_, channels_);
 }
 
+EngineCore::~EngineCore() {
+    delete current_;
+    delete pending_.exchange(nullptr);
+    Song* s = nullptr;
+    while (retired_.pop(s)) delete s;
+}
+
 void EngineCore::prepare(int sampleRate, int channelCount) {
-    // Nếu đang phát mà đổi sample rate, giữ nguyên vị trí phách.
-    if (playing_) {
+    if (playing_) {  // đổi sample rate giữa chừng: giữ nguyên vị trí phách
         baseBeat_ += static_cast<double>(framesSinceBase_) * beatsPerFrame_;
         framesSinceBase_ = 0;
     }
@@ -65,44 +78,66 @@ void EngineCore::prepare(int sampleRate, int channelCount) {
     channels_ = std::max(1, channelCount);
     appliedBpm_ = bpm_.load(std::memory_order_relaxed);
     beatsPerFrame_ = static_cast<double>(appliedBpm_) / (60.0 * sampleRate_);
-    clickDecay_ = static_cast<float>(std::exp(-1.0 / (0.008 * sampleRate_)));  // ~8 ms
-    releaseCoef_ = static_cast<float>(std::exp(-1.0 / (0.12 * sampleRate_)));  // ~120 ms
-
-    for (auto& v : voices_) v = detail::Voice{};
-    click_ = detail::Click{};
+    clickDecay_ = static_cast<float>(std::exp(-1.0 / (0.008 * sampleRate_)));
+    releaseCoef_ = static_cast<float>(std::exp(-1.0 / (0.12 * sampleRate_)));
+    chokeCoef_ = static_cast<float>(std::exp(-1.0 / (0.012 * sampleRate_)));
+    for (auto& v : voices_) v.active = false;
+    click_ = Click{};
+    gainsInit_ = false;
 }
 
 // ---------------------------------------------------------------------------------------
 // Luồng UI
 // ---------------------------------------------------------------------------------------
 
-void EngineCore::setBpm(float bpm) noexcept {
-    bpm_.store(std::clamp(bpm, kMinBpm, kMaxBpm), std::memory_order_relaxed);
+void EngineCore::setBpm(float bpm) noexcept { bpm_.store(std::clamp(bpm, kMinBpm, kMaxBpm), std::memory_order_relaxed); }
+
+void EngineCore::setMetronomeEnabled(bool enabled) noexcept { metronome_.store(enabled, std::memory_order_relaxed); }
+
+void EngineCore::setTrackMix(int track, float volume, float pan, bool mute, bool solo) noexcept {
+    if (track < 0 || track >= kMaxTracks) return;
+    TrackMix& m = mix_[track];
+    m.volume.store(volume, std::memory_order_relaxed);
+    m.pan.store(pan, std::memory_order_relaxed);
+    m.mute.store(mute, std::memory_order_relaxed);
+    m.solo.store(solo, std::memory_order_relaxed);
 }
 
-void EngineCore::setMetronomeEnabled(bool enabled) noexcept {
-    metronome_.store(enabled, std::memory_order_relaxed);
+void EngineCore::publishSong(Song* song) {
+    Song* r = nullptr;
+    while (retired_.pop(r)) delete r;  // giải phóng bản cũ mà luồng âm thanh đã trả về
+    Song* unused = pending_.exchange(song, std::memory_order_acq_rel);
+    delete unused;  // bản chưa kịp tới luồng âm thanh thì bỏ luôn
 }
 
-bool EngineCore::setPlaying(bool playing) noexcept {
+bool EngineCore::play(int fromTick) noexcept {
     Command c;
-    c.type = Command::Type::SetPlaying;
-    c.a = playing ? 1 : 0;
+    c.type = Command::Type::Play;
+    c.a = std::max(0, fromTick);
     return commands_.push(c);
 }
 
-bool EngineCore::noteOn(int note, int velocity) noexcept {
+bool EngineCore::stop() noexcept {
+    Command c;
+    c.type = Command::Type::Stop;
+    return commands_.push(c);
+}
+
+bool EngineCore::noteOn(int inst, int track, int note, int velocity) noexcept {
     Command c;
     c.type = Command::Type::NoteOn;
-    c.a = note;
-    c.b = velocity;
+    c.a = inst;
+    c.b = track;
+    c.c = note;
+    c.d = velocity;
     return commands_.push(c);
 }
 
-bool EngineCore::noteOff(int note) noexcept {
+bool EngineCore::noteOff(int track, int note) noexcept {
     Command c;
     c.type = Command::Type::NoteOff;
-    c.a = note;
+    c.b = track;
+    c.c = note;
     return commands_.push(c);
 }
 
@@ -118,42 +153,76 @@ bool EngineCore::allNotesOff() noexcept {
 
 void EngineCore::apply(const Command& cmd) noexcept {
     switch (cmd.type) {
-        case Command::Type::SetPlaying:
-            if (cmd.a != 0) {
-                playing_ = true;
-                baseBeat_ = 0.0;
-                framesSinceBase_ = 0;
-                lastBeat_ = -1;
-            } else {
-                playing_ = false;
+        case Command::Type::Play:
+            releaseSequenced(true);
+            playing_ = true;
+            baseBeat_ = static_cast<double>(cmd.a) / kPpq;
+            framesSinceBase_ = 0;
+            lastBeat_ = static_cast<int64_t>(std::floor(baseBeat_ + kEps)) - 1;
+            lastTick_ = static_cast<int64_t>(cmd.a) - 1;
+            seekEvents(cmd.a);
+            break;
+
+        case Command::Type::Stop:
+            playing_ = false;
+            releaseSequenced(true);
+            break;
+
+        case Command::Type::NoteOn:
+            if (cmd.a >= 0 && cmd.a < kInstCount) {
+                startVoice(static_cast<Inst>(cmd.a), cmd.b, cmd.c, cmd.d, -1, false, voiceCounter_ + 1);
             }
             break;
 
-        case Command::Type::NoteOn: {
-            detail::Voice* v = allocateVoice();
-            if (v) v->start(cmd.a, cmd.b, sampleRate_, ++voiceCounter_);
-            break;
-        }
-
         case Command::Type::NoteOff:
             for (auto& v : voices_) {
-                if (v.active && !v.releasing && v.note == cmd.a) v.beginRelease(releaseCoef_);
+                if (v.active && !v.releasing && !v.seq && v.kind != Voice::Kind::Drum && v.track == cmd.b &&
+                    v.note == cmd.c) {
+                    v.beginRelease(releaseCoef_);
+                }
             }
             break;
 
         case Command::Type::AllNotesOff:
-            for (auto& v : voices_) v.beginRelease(releaseCoef_);
+            for (auto& v : voices_) v.beginRelease(v.kind == Voice::Kind::Drum ? chokeCoef_ : releaseCoef_);
             break;
     }
 }
 
+void EngineCore::adoptPendingSong() noexcept {
+    Song* p = pending_.exchange(nullptr, std::memory_order_acq_rel);
+    if (!p) return;
+    Song* old = current_;
+    current_ = p;
+    retired_.push(old);  // đầy thì để rò rỉ còn hơn giải phóng trong luồng thời gian thực
+    if (playing_) seekEvents(lastTick_ + 1);
+}
+
+void EngineCore::seekEvents(int64_t tick) noexcept {
+    for (int t = 0; t < kMaxTracks; ++t) {
+        const auto& v = current_->tracks[t].notes;
+        const auto it = std::lower_bound(v.begin(), v.end(), tick,
+                                         [](const Note& n, int64_t x) { return n.start < x; });
+        nextIdx_[t] = static_cast<int>(it - v.begin());
+    }
+}
+
+void EngineCore::releaseSequenced(bool includeDrums) noexcept {
+    for (auto& v : voices_) {
+        if (!v.active || !v.seq) continue;
+        const bool drum = v.kind == Voice::Kind::Drum;
+        if (drum && !includeDrums) continue;
+        v.beginRelease(drum ? chokeCoef_ : releaseCoef_);
+    }
+}
+
 // Còn voice trống thì dùng; hết thì "ăn cắp": ưu tiên voice đang nhả nhỏ nhất, sau đó voice cũ nhất.
-detail::Voice* EngineCore::allocateVoice() noexcept {
+Voice* EngineCore::allocateVoice() noexcept {
     for (auto& v : voices_) {
         if (!v.active) return &v;
     }
-    detail::Voice* quietest = nullptr;
-    detail::Voice* oldest = &voices_[0];
+    Voice* quietest = nullptr;
+    Voice* oldest = &voices_[0];
     for (auto& v : voices_) {
         if (v.releasing && (!quietest || v.release < quietest->release)) quietest = &v;
         if (v.order < oldest->order) oldest = &v;
@@ -161,23 +230,98 @@ detail::Voice* EngineCore::allocateVoice() noexcept {
     return quietest ? quietest : oldest;
 }
 
+void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_t endTick, bool seq,
+                            uint64_t seed) noexcept {
+    track = std::clamp(track, 0, kMaxTracks - 1);
+    if (isDrum(inst) && note == kHatClosed) {  // hi-hat đóng chặn hi-hat mở
+        for (auto& v : voices_) {
+            if (v.active && !v.releasing && v.kind == Voice::Kind::Drum && v.track == track && v.piece == kHatOpen) {
+                v.beginRelease(chokeCoef_);
+            }
+        }
+    }
+    Voice* v = allocateVoice();
+    if (!v) return;
+    v->start(inst, note, velocity, sampleRate_, ++voiceCounter_, seed);
+    v->track = static_cast<uint8_t>(track);
+    v->seq = seq;
+    v->endTick = endTick;
+}
+
 void EngineCore::triggerClick(bool accent) noexcept {
     click_.active = true;
-    click_.phase = 0.25;
+    click_.phase = 0.25;  // bắt đầu ở pha cosine: mẫu đầu tiên có năng lượng ngay tại khung hình của phách
     click_.phaseInc = (accent ? 1500.0 : 1000.0) / sampleRate_;
     click_.env = 1.0f;
     click_.amp = accent ? 0.5f : 0.35f;
     click_.decay = clickDecay_;
 }
 
+void EngineCore::advanceTransport(bool metronome) noexcept {
+    const Song& s = *current_;
+    double beatPos = baseBeat_ + static_cast<double>(framesSinceBase_) * beatsPerFrame_;
+    double tickPos = beatPos * kPpq;
+    auto tickOf = [](double tp) { return static_cast<int64_t>(std::floor(tp + kEps)); };
+    int64_t tickNow = tickOf(tickPos);
+
+    if (s.loop && s.loopEnd > s.loopStart && tickNow >= s.loopEnd) {
+        // Quay vòng: giữ phần dư (kể cả phần lẻ của khung hình) nên vòng lặp không trôi nhịp.
+        const double len = static_cast<double>(s.loopEnd - s.loopStart);
+        const double over = std::fmod(std::max(0.0, tickPos - s.loopEnd), len);
+        baseBeat_ = (s.loopStart + over) / kPpq;
+        framesSinceBase_ = 0;
+        releaseSequenced(false);  // trống là nốt ngắn, để tự tàn; nốt dài bị cắt ở biên vòng
+        seekEvents(s.loopStart);
+        beatPos = baseBeat_;
+        tickPos = beatPos * kPpq;
+        tickNow = tickOf(tickPos);
+        lastTick_ = static_cast<int64_t>(s.loopStart) - 1;
+        lastBeat_ = static_cast<int64_t>(std::floor(beatPos + kEps)) - 1;
+    } else if (!s.loop && s.length > 0 && tickNow >= s.length) {
+        playing_ = false;  // hết bài
+        releaseSequenced(true);
+        return;
+    }
+
+    if (tickNow != lastTick_) {
+        lastTick_ = tickNow;
+        for (int t = 0; t < kMaxTracks; ++t) {
+            const auto& notes = s.tracks[t].notes;
+            int& idx = nextIdx_[t];
+            const int count = static_cast<int>(notes.size());
+            while (idx < count && notes[idx].start <= tickNow) {
+                const Note& n = notes[idx++];
+                if (audible_[t]) {
+                    // Hạt giống theo (tick, track, nốt): mỗi vòng lặp nghe giống hệt nhau, render offline tái lập được.
+                    const uint64_t seed = static_cast<uint64_t>(n.start) * 2654435761ULL +
+                                          static_cast<uint64_t>(t) * 40503ULL + static_cast<uint64_t>(n.pitch) * 9973ULL + 1ULL;
+                    startVoice(s.tracks[t].inst, t, n.pitch, n.vel, static_cast<int64_t>(n.start) + n.dur, true, seed);
+                }
+            }
+        }
+        for (auto& v : voices_) {  // nhả những nốt đã hết độ dài
+            if (v.active && v.seq && !v.releasing && v.kind != Voice::Kind::Drum && v.endTick >= 0 &&
+                tickNow >= v.endTick) {
+                v.beginRelease(releaseCoef_);
+            }
+        }
+    }
+
+    const auto beat = static_cast<int64_t>(std::floor(beatPos + kEps));
+    if (beat > lastBeat_) {
+        lastBeat_ = beat;
+        if (metronome) triggerClick(beat % kBeatsPerBar == 0);
+    }
+    ++framesSinceBase_;
+}
+
 void EngineCore::render(float* out, int numFrames) noexcept {
-    // 1) Nhận lệnh từ UI.
     Command cmd;
     while (commands_.pop(cmd)) apply(cmd);
+    adoptPendingSong();
 
-    // 2) Đổi tempo: rebase để vị trí phách liên tục.
     const float bpm = bpm_.load(std::memory_order_relaxed);
-    if (bpm != appliedBpm_) {
+    if (bpm != appliedBpm_) {  // đổi tempo: rebase để vị trí phách liên tục
         if (playing_) {
             baseBeat_ += static_cast<double>(framesSinceBase_) * beatsPerFrame_;
             framesSinceBase_ = 0;
@@ -187,34 +331,65 @@ void EngineCore::render(float* out, int numFrames) noexcept {
     }
     const bool metronome = metronome_.load(std::memory_order_relaxed);
 
-    // 3) Dựng âm thanh từng khung hình.
-    for (int i = 0; i < numFrames; ++i) {
-        if (playing_) {
-            const double beatPos = baseBeat_ + static_cast<double>(framesSinceBase_) * beatsPerFrame_;
-            const auto beat = static_cast<int64_t>(std::floor(beatPos + kBeatEpsilon));
-            if (beat > lastBeat_) {
-                lastBeat_ = beat;
-                if (metronome) triggerClick(beat % kBeatsPerBar == 0);
-            }
-            ++framesSinceBase_;
+    bool anySolo = false;
+    for (const auto& m : mix_) anySolo = anySolo || m.solo.load(std::memory_order_relaxed);
+    for (int t = 0; t < kMaxTracks; ++t) {
+        const TrackMix& m = mix_[t];
+        audible_[t] = anySolo ? m.solo.load(std::memory_order_relaxed) : !m.mute.load(std::memory_order_relaxed);
+        const float vol = audible_[t] ? std::clamp(m.volume.load(std::memory_order_relaxed), 0.0f, 1.5f) : 0.0f;
+        const float pan = std::clamp(m.pan.load(std::memory_order_relaxed), -1.0f, 1.0f);
+        const float ang = (pan + 1.0f) * static_cast<float>(kPi / 4.0);  // pan đẳng công suất
+        targetL_[t] = vol * std::cos(ang);
+        targetR_[t] = vol * std::sin(ang);
+    }
+    if (!gainsInit_) {
+        for (int t = 0; t < kMaxTracks; ++t) {
+            curL_[t] = targetL_[t];
+            curR_[t] = targetR_[t];
         }
-
-        float mix = 0.0f;
-        if (click_.active) mix += click_.render(table_);
-        for (auto& v : voices_) {
-            if (v.active) mix += v.render(table_);
-        }
-
-        const float s = softClip(mix * kMasterGain);
-        float* frame = out + static_cast<size_t>(i) * channels_;
-        for (int c = 0; c < channels_; ++c) frame[c] = s;
+        gainsInit_ = true;
     }
 
-    // 4) Công bố trạng thái cho UI.
-    const double pos =
-        playing_ ? baseBeat_ + static_cast<double>(framesSinceBase_) * beatsPerFrame_ : 0.0;
-    beatPosPublished_.store(pos, std::memory_order_relaxed);
+    for (int i = 0; i < numFrames; ++i) {
+        if (playing_) advanceTransport(metronome);
 
+        float bus[kMaxTracks] = {};
+        for (auto& v : voices_) {
+            if (v.active) bus[v.track] += v.render(table_);
+        }
+
+        float left = 0.0f, right = 0.0f;
+        for (int t = 0; t < kMaxTracks; ++t) {
+            curL_[t] += (targetL_[t] - curL_[t]) * kGainSmooth;
+            curR_[t] += (targetR_[t] - curR_[t]) * kGainSmooth;
+            left += bus[t] * curL_[t];
+            right += bus[t] * curR_[t];
+        }
+        if (click_.active) {
+            const float c = table_.at(click_.phase) * click_.env * click_.amp;
+            click_.phase += click_.phaseInc;
+            if (click_.phase >= 1.0) click_.phase -= 1.0;
+            click_.env *= click_.decay;
+            if (click_.env < 1e-3f) click_.active = false;
+            left += c;
+            right += c;
+        }
+        left = softClip(left * kMasterGain);
+        right = softClip(right * kMasterGain);
+
+        float* frame = out + static_cast<size_t>(i) * channels_;
+        if (channels_ == 1) {
+            frame[0] = 0.5f * (left + right);
+        } else {
+            frame[0] = left;
+            frame[1] = right;
+            for (int c = 2; c < channels_; ++c) frame[c] = 0.0f;
+        }
+    }
+
+    const double pos = playing_ ? baseBeat_ + static_cast<double>(framesSinceBase_) * beatsPerFrame_ : 0.0;
+    beatPosPublished_.store(pos, std::memory_order_relaxed);
+    playingPublished_.store(playing_, std::memory_order_relaxed);
     int active = 0;
     for (const auto& v : voices_) active += v.active ? 1 : 0;
     activeVoicesPublished_.store(active, std::memory_order_relaxed);

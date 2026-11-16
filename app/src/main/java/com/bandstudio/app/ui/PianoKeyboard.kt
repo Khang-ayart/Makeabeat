@@ -2,8 +2,8 @@ package com.bandstudio.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,12 +27,13 @@ private val BlackAfterWhite = setOf(0, 1, 3, 4, 5)
 private val WhiteSteps = intArrayOf(0, 2, 4, 5, 7, 9, 11)
 
 /**
- * Bàn phím piano cảm ứng đa điểm. Mỗi phím tự xử lý ngón tay của nó nên bấm nhiều phím cùng lúc được.
- * startNote phải là nốt C. Màn hình rộng hiện 2 quãng tám, màn hình hẹp hiện 1 quãng tám.
+ * Bàn phím piano cảm ứng đa điểm: mỗi phím tự xử lý ngón tay của nó nên bấm nhiều phím cùng lúc được.
+ * [startNote] phải là nốt C. Màn hình rộng hiện 2 quãng tám, hẹp hiện 1 quãng tám.
  */
 @Composable
 fun PianoKeyboard(
     startNote: Int,
+    accent: Color,
     onNoteOn: (Int) -> Unit,
     onNoteOff: (Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -46,15 +47,7 @@ fun PianoKeyboard(
 
         Row(Modifier.fillMaxSize()) {
             for (note in whiteNotes) {
-                PianoKey(
-                    note = note,
-                    black = false,
-                    onNoteOn = onNoteOn,
-                    onNoteOff = onNoteOff,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                )
+                PianoKey(note, false, accent, onNoteOn, onNoteOff, Modifier.weight(1f).fillMaxHeight())
             }
         }
 
@@ -62,11 +55,8 @@ fun PianoKeyboard(
         for (i in 0 until whiteCount - 1) {
             if (i % 7 in BlackAfterWhite) {
                 PianoKey(
-                    note = whiteNotes[i] + 1,
-                    black = true,
-                    onNoteOn = onNoteOn,
-                    onNoteOff = onNoteOff,
-                    modifier = Modifier
+                    whiteNotes[i] + 1, true, accent, onNoteOn, onNoteOff,
+                    Modifier
                         .offset(x = keyWidth * (i + 1) - blackWidth / 2)
                         .width(blackWidth)
                         .fillMaxHeight(0.62f),
@@ -80,15 +70,15 @@ fun PianoKeyboard(
 private fun PianoKey(
     note: Int,
     black: Boolean,
+    accent: Color,
     onNoteOn: (Int) -> Unit,
     onNoteOff: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var pressed by remember { mutableStateOf(false) }
     val fill = when {
-        black && pressed -> Color(0xFF5B7CFA)
+        pressed -> accent
         black -> Color(0xFF15171C)
-        pressed -> Color(0xFFBFD0FF)
         else -> Color(0xFFF4F4F6)
     }
     Box(

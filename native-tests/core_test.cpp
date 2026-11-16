@@ -1,34 +1,66 @@
 // Kiểm thử lõi âm thanh trên máy tính (không cần Android / Oboe).
 // Chạy (một dòng, từ thư mục gốc dự án):
-//   g++ -std=c++17 -O2 -Iapp/src/main/cpp native-tests/core_test.cpp app/src/main/cpp/engine_core.cpp -o core_test && ./core_test
+//   g++ -std=c++17 -O2 -Iapp/src/main/cpp native-tests/core_test.cpp app/src/main/cpp/engine_core.cpp app/src/main/cpp/noise_reducer.cpp -o core_test && ./core_test
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "engine_core.h"
+#include "noise_reducer.h"
 
-using band::EngineCore;
+using namespace band;
 
 static int g_failures = 0;
 static int g_tests = 0;
 
-#define CHECK(cond, ...)                                  \
-    do {                                                  \
-        if (!(cond)) {                                    \
+#define CHECK(cond, ...)                                   \
+    do {                                                   \
+        if (!(cond)) {                                     \
             std::printf("    FAIL (line %d): ", __LINE__); \
-            std::printf(__VA_ARGS__);                     \
-            std::printf("\n");                            \
-            ++g_failures;                                 \
-        }                                                 \
+            std::printf(__VA_ARGS__);                      \
+            std::printf("\n");                             \
+            ++g_failures;                                  \
+        }                                                  \
     } while (0)
 
 static void begin(const char* name) {
     ++g_tests;
     std::printf("[ RUN ] %s\n", name);
+}
+
+// ---- tiện ích -----------------------------------------------------------------------
+
+struct N {
+    int start, dur, pitch, vel;
+};
+using TrackSpec = std::pair<Inst, std::vector<N>>;
+
+static std::vector<int32_t> encode(bool loop, int ls, int le, int len, const std::vector<TrackSpec>& tracks) {
+    std::vector<int32_t> d = {1, loop ? 1 : 0, ls, le, len, static_cast<int32_t>(tracks.size())};
+    for (const auto& t : tracks) {
+        d.push_back(static_cast<int32_t>(t.first));
+        d.push_back(static_cast<int32_t>(t.second.size()));
+        for (const N& n : t.second) {
+            d.push_back(n.start);
+            d.push_back(n.dur);
+            d.push_back(n.pitch);
+            d.push_back(n.vel);
+        }
+    }
+    return d;
+}
+
+static void publish(EngineCore& core, const std::vector<int32_t>& d) {
+    Song* s = decodeSong(d.data(), static_cast<int>(d.size()));
+    CHECK(s != nullptr, "decodeSong failed");
+    core.publishSong(s);
 }
 
 static std::vector<float> renderAll(EngineCore& core, int channels, int totalFrames, int chunk) {
@@ -42,13 +74,12 @@ static std::vector<float> renderAll(EngineCore& core, int channels, int totalFra
     return out;
 }
 
-// Mốc bắt đầu mỗi tiếng click (đầu ra mono): mẫu "to" đầu tiên sau một khoảng lặng dài.
-static std::vector<int64_t> findOnsets(const std::vector<float>& x, int64_t frameOffset = 0) {
+static std::vector<int64_t> findOnsets(const std::vector<float>& x, int64_t offset = 0) {
     std::vector<int64_t> onsets;
     int64_t lastLoud = -1000000;
     for (size_t i = 0; i < x.size(); ++i) {
         if (std::fabs(x[i]) > 1e-4f) {
-            if (static_cast<int64_t>(i) - lastLoud > 2000) onsets.push_back(frameOffset + static_cast<int64_t>(i));
+            if (static_cast<int64_t>(i) - lastLoud > 2000) onsets.push_back(offset + static_cast<int64_t>(i));
             lastLoud = static_cast<int64_t>(i);
         }
     }
@@ -61,12 +92,28 @@ static float peak(const std::vector<float>& x, size_t from, size_t count) {
     return p;
 }
 
+static double rms(const std::vector<float>& x, size_t from, size_t to) {
+    double e = 0.0;
+    for (size_t i = from; i < to; ++i) e += static_cast<double>(x[i]) * x[i];
+    return std::sqrt(e / static_cast<double>(std::max<size_t>(1, to - from)));
+}
+
+static EngineCore* newMono(int sr, float bpm, bool metronome) {
+    auto* c = new EngineCore();
+    c->prepare(sr, 1);
+    c->setBpm(bpm);
+    c->setMetronomeEnabled(metronome);
+    return c;
+}
+
+// ---- Nhịp / transport -----------------------------------------------------------------
+
 static void testExactBeatsAt120() {
-    begin("120 BPM @ 48 kHz: mọi phách rơi đúng khung hình k * 24000");
+    begin("Metronome 120 BPM @ 48 kHz: mọi phách rơi đúng khung hình k * 24000");
     EngineCore core;
     core.prepare(48000, 1);
     core.setBpm(120.0f);
-    core.setPlaying(true);
+    core.play(0);
     const auto out = renderAll(core, 1, 48000 * 10, 480);
     const auto onsets = findOnsets(out);
     CHECK(onsets.size() == 20, "expected 20 beats, got %zu", onsets.size());
@@ -80,42 +127,24 @@ static void testNoDriftAtOddTempo() {
     EngineCore core;
     core.prepare(44100, 1);
     core.setBpm(133.0f);
-    core.setPlaying(true);
+    core.play(0);
     const auto out = renderAll(core, 1, 44100 * 60, 441);
     const auto onsets = findOnsets(out);
     CHECK(onsets.size() == 133, "expected 133 beats, got %zu", onsets.size());
-    const double framesPerBeat = 44100.0 * 60.0 / 133.0;
+    const double fpb = 44100.0 * 60.0 / 133.0;
     for (size_t k = 0; k < onsets.size(); ++k) {
-        const double d = static_cast<double>(onsets[k]) - static_cast<double>(k) * framesPerBeat;
+        const double d = static_cast<double>(onsets[k]) - static_cast<double>(k) * fpb;
         CHECK(d > -1e-3 && d < 1.0 + 1e-3, "beat %zu off by %.4f frames", k, d);
     }
 }
 
-static void testChunkInvariance() {
-    begin("Kết quả giống hệt từng bit dù callback có kích thước 480 / 137 / 1 khung hình");
-    auto run = [](int chunk) {
-        EngineCore core;
-        core.prepare(48000, 1);
-        core.setBpm(97.0f);
-        core.noteOn(64, 100);
-        core.noteOn(67, 90);
-        core.setPlaying(true);
-        return renderAll(core, 1, 48000 * 5, chunk);
-    };
-    const auto a = run(480);
-    const auto b = run(137);
-    const auto c = run(1);
-    CHECK(a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0, "480 vs 137 differ");
-    CHECK(a.size() == c.size() && std::memcmp(a.data(), c.data(), a.size() * sizeof(float)) == 0, "480 vs 1 differ");
-}
-
 static void testTempoChange() {
-    begin("Đổi tempo 120 -> 60 giữa chừng: vị trí phách liên tục, phách kế đúng chỗ");
+    begin("Đổi tempo 120 -> 60 giữa chừng: vị trí phách liên tục");
     EngineCore core;
     core.prepare(48000, 1);
     core.setBpm(120.0f);
-    core.setPlaying(true);
-    std::vector<float> out = renderAll(core, 1, 36000, 36000);  // tới phách 1.5
+    core.play(0);
+    std::vector<float> out = renderAll(core, 1, 36000, 36000);
     core.setBpm(60.0f);
     const auto tail = renderAll(core, 1, 84000, 480);
     out.insert(out.end(), tail.begin(), tail.end());
@@ -123,99 +152,530 @@ static void testTempoChange() {
     const int64_t expected[] = {0, 24000, 60000, 108000};
     CHECK(onsets.size() == 4, "expected 4 beats, got %zu", onsets.size());
     for (size_t k = 0; k < std::min<size_t>(onsets.size(), 4); ++k) {
-        CHECK(onsets[k] == expected[k], "beat %zu at %lld, expected %lld", k, static_cast<long long>(onsets[k]),
-              static_cast<long long>(expected[k]));
+        CHECK(onsets[k] == expected[k], "beat %zu at %lld", k, static_cast<long long>(onsets[k]));
     }
 }
 
-static void testAccent() {
-    begin("Phách đầu mỗi ô nhịp to hơn các phách còn lại");
+static void testAccentAndStop() {
+    begin("Phách đầu ô nhịp to hơn; tắt metronome thì im; dừng thì beatPosition về 0");
     EngineCore core;
     core.prepare(48000, 1);
     core.setBpm(120.0f);
-    core.setPlaying(true);
+    core.play(0);
     const auto out = renderAll(core, 1, 24000 * 5 + 2000, 480);
-    const float p0 = peak(out, 0, 2000);
-    const float p1 = peak(out, 24000, 2000);
-    const float p4 = peak(out, 24000 * 4, 2000);
+    const float p0 = peak(out, 0, 2000), p1 = peak(out, 24000, 2000), p4 = peak(out, 24000 * 4, 2000);
     CHECK(p0 > p1 * 1.2f, "accent %.3f vs normal %.3f", p0, p1);
-    CHECK(std::fabs(p0 - p4) < 1e-6f, "bar 2 accent %.3f differs from bar 1 %.3f", p4, p0);
-}
-
-static void testMetronomeOffAndStop() {
-    begin("Tắt metronome thì im lặng; dừng transport thì beatPosition về 0");
-    EngineCore core;
-    core.prepare(48000, 1);
+    CHECK(std::fabs(p0 - p4) < 1e-6f, "bar 2 accent differs");
     core.setMetronomeEnabled(false);
-    core.setPlaying(true);
-    const auto out = renderAll(core, 1, 48000, 480);
-    CHECK(peak(out, 0, out.size()) == 0.0f, "metronome off but output not silent");
-    CHECK(core.beatPosition() > 1.0, "beat position should advance, got %.3f", core.beatPosition());
-    core.setPlaying(false);
-    renderAll(core, 1, 480, 480);
-    CHECK(core.beatPosition() == 0.0, "beat position should reset, got %.3f", core.beatPosition());
+    core.stop();
+    renderAll(core, 1, 9600, 480);  // chờ tiếng click cuối tàn hẳn
+    CHECK(core.beatPosition() == 0.0 && !core.isPlaying(), "stop did not reset transport");
+    core.play(0);
+    const auto quiet = renderAll(core, 1, 48000, 480);
+    CHECK(peak(quiet, 0, quiet.size()) == 0.0f, "metronome off but not silent");
 }
 
-static void testNoteLifecycle() {
-    begin("Nốt: bật có tiếng, nhả thì tắt hẳn và giải phóng voice");
+// ---- Sequencer ------------------------------------------------------------------------
+
+static void testSequencedOnsetExact() {
+    begin("Nốt hi-hat ở tick 960 / 1920 phát đúng khung hình 24000 / 48000");
+    std::unique_ptr<EngineCore> core(newMono(48000, 120.0f, false));
+    publish(*core, encode(false, 0, 0, 0, {{Inst::DrumKit, {{960, 240, kHatClosed, 100}, {1920, 240, kHatClosed, 100}}}}));
+    core->play(0);
+    const auto out = renderAll(*core, 1, 48000 * 2, 333);
+    const auto onsets = findOnsets(out);
+    CHECK(onsets.size() == 2, "expected 2 hits, got %zu", onsets.size());
+    if (onsets.size() == 2) {
+        CHECK(onsets[0] == 24000 && onsets[1] == 48000, "hits at %lld, %lld", static_cast<long long>(onsets[0]),
+              static_cast<long long>(onsets[1]));
+    }
+}
+
+static void testLoopExact() {
+    begin("Loop 1 ô nhịp @120: hi-hat rơi đúng khung hình k * 96000, không trôi");
+    std::unique_ptr<EngineCore> core(newMono(48000, 120.0f, false));
+    publish(*core, encode(true, 0, 3840, 3840, {{Inst::DrumKit, {{0, 240, kHatClosed, 100}}}}));
+    core->play(0);
+    const auto out = renderAll(*core, 1, 96000 * 4 + 1000, 480);
+    const auto onsets = findOnsets(out);
+    CHECK(onsets.size() == 5, "expected 5 hits, got %zu", onsets.size());
+    for (size_t k = 0; k < onsets.size(); ++k) {
+        CHECK(onsets[k] == static_cast<int64_t>(k) * 96000, "hit %zu at %lld", k, static_cast<long long>(onsets[k]));
+    }
+}
+
+static void testLoopNoDriftNonInteger() {
+    begin("Loop 1 ô nhịp @133 BPM / 44.1 kHz (độ dài lẻ) trong 20 vòng: sai số < 1 khung hình");
+    std::unique_ptr<EngineCore> core;
+    core.reset(new EngineCore());
+    core->prepare(44100, 1);
+    core->setBpm(133.0f);
+    core->setMetronomeEnabled(false);
+    publish(*core, encode(true, 0, 3840, 3840, {{Inst::DrumKit, {{0, 240, kHatClosed, 100}}}}));
+    core->play(0);
+    const double loopFrames = 44100.0 * 60.0 / 133.0 * 4.0;
+    const auto out = renderAll(*core, 1, static_cast<int>(loopFrames * 20) + 500, 441);
+    const auto onsets = findOnsets(out);
+    CHECK(onsets.size() == 21, "expected 21 hits, got %zu", onsets.size());
+    for (size_t k = 0; k < onsets.size(); ++k) {
+        const double d = static_cast<double>(onsets[k]) - static_cast<double>(k) * loopFrames;
+        CHECK(d > -1e-3 && d < 1.0 + 1e-3, "loop %zu off by %.4f frames", k, d);
+    }
+}
+
+static void testEndOfSong() {
+    begin("Phát không lặp: tự dừng ở cuối bài");
+    std::unique_ptr<EngineCore> core(newMono(48000, 120.0f, false));
+    publish(*core, encode(false, 0, 0, 1920, {{Inst::DrumKit, {{0, 240, kHatClosed, 100}}}}));
+    core->play(0);
+    renderAll(*core, 1, 24000, 480);
+    CHECK(core->isPlaying(), "should still be playing after 1 beat");
+    renderAll(*core, 1, 48000, 480);
+    CHECK(!core->isPlaying(), "should have stopped after the song end");
+}
+
+static void testChunkInvariance() {
+    begin("Nhiều nhạc cụ + loop + đổi mix: giống hệt từng bit với buffer 480 / 137 / 1");
+    auto run = [](int chunk) {
+        EngineCore core;
+        core.prepare(48000, 2);
+        core.setBpm(97.0f);
+        core.setTrackMix(1, 0.6f, -0.5f, false, false);
+        std::vector<TrackSpec> tr = {
+            {Inst::Piano, {{0, 960, 60, 100}, {960, 960, 64, 90}, {1920, 1920, 67, 80}}},
+            {Inst::AcousticGuitar, {{0, 1920, 48, 100}, {1920, 960, 55, 100}}},
+            {Inst::Bass, {{0, 960, 36, 100}, {1920, 960, 43, 100}}},
+            {Inst::ElectricGuitar, {{480, 480, 52, 110}}},
+            {Inst::DrumKit, {{0, 240, kKick, 120}, {960, 240, kSnare, 110}, {480, 120, kHatClosed, 90}, {1440, 240, kClap, 90}}},
+        };
+        publish(core, encode(true, 0, 3840, 3840, tr));
+        core.play(0);
+        return renderAll(core, 2, 48000 * 6, chunk);
+    };
+    const auto a = run(480), b = run(137), c = run(1);
+    CHECK(a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0, "480 vs 137 differ");
+    CHECK(a.size() == c.size() && std::memcmp(a.data(), c.data(), a.size() * sizeof(float)) == 0, "480 vs 1 differ");
+    CHECK(peak(a, 0, a.size()) > 0.05f, "mix is silent");
+}
+
+static void testSongSwapWhilePlaying() {
+    begin("Thay bài nhạc khi đang phát (nhiều lần): nốt mới áp dụng, không lỗi bộ nhớ");
+    std::unique_ptr<EngineCore> core(newMono(48000, 120.0f, false));
+    publish(*core, encode(true, 0, 3840, 3840, {{Inst::DrumKit, {{0, 240, kHatClosed, 100}}}}));
+    core->play(0);
+    renderAll(*core, 1, 10000, 480);
+    for (int i = 0; i < 50; ++i) {
+        publish(*core, encode(true, 0, 3840, 3840, {{Inst::DrumKit, {{960 * (i % 4), 240, kHatClosed, 100}}}}));
+        renderAll(*core, 1, 480, 480);
+    }
+    // Bài cuối: snare ở tick 960*(49%4=1) = 960 -> sau khi hết vòng hiện tại phải nghe đúng ở đó.
+    const auto out = renderAll(*core, 1, 96000 * 2, 480);
+    CHECK(peak(out, 0, out.size()) > 0.05f, "no sound after swaps");
+}
+
+static void testMuteSolo() {
+    begin("Mute / Solo theo track");
+    auto run = [](bool mute0, bool solo1) {
+        std::unique_ptr<EngineCore> core(newMono(48000, 120.0f, false));
+        core->setTrackMix(0, 0.8f, 0.0f, mute0, false);
+        core->setTrackMix(1, 0.8f, 0.0f, false, solo1);
+        publish(*core, encode(false, 0, 0, 0,
+                              {{Inst::DrumKit, {{0, 240, kHatClosed, 100}}}, {Inst::DrumKit, {{960, 240, kHatClosed, 100}}}}));
+        core->play(0);
+        return renderAll(*core, 1, 48000, 480);
+    };
+    const auto base = run(false, false);
+    CHECK(findOnsets(base).size() == 2, "both tracks should sound");
+    const auto muted = run(true, false);
+    const auto mo = findOnsets(muted);
+    CHECK(mo.size() == 1 && mo[0] == 24000, "mute track 0: expected only beat 1 hit (got %zu)", mo.size());
+    const auto solo = run(false, true);
+    const auto so = findOnsets(solo);
+    CHECK(so.size() == 1 && so[0] == 24000, "solo track 1: expected only beat 1 hit (got %zu)", so.size());
+}
+
+static void testPan() {
+    begin("Pan: hết trái thì kênh phải im, hết phải thì kênh trái im");
+    auto run = [](float pan) {
+        EngineCore core;
+        core.prepare(48000, 2);
+        core.setTrackMix(0, 0.8f, pan, false, false);
+        core.noteOn(static_cast<int>(Inst::Piano), 0, 60, 100);
+        return renderAll(core, 2, 4800, 480);
+    };
+    const auto l = run(-1.0f), r = run(1.0f);
+    float lL = 0, lR = 0, rL = 0, rR = 0;
+    for (size_t i = 0; i + 1 < l.size(); i += 2) {
+        lL = std::max(lL, std::fabs(l[i]));
+        lR = std::max(lR, std::fabs(l[i + 1]));
+        rL = std::max(rL, std::fabs(r[i]));
+        rR = std::max(rR, std::fabs(r[i + 1]));
+    }
+    CHECK(lL > 0.05f && lR < 1e-3f, "pan left: L=%.4f R=%.4f", lL, lR);
+    CHECK(rR > 0.05f && rL < 1e-3f, "pan right: L=%.4f R=%.4f", rL, rR);
+}
+
+// ---- Nhạc cụ --------------------------------------------------------------------------
+
+static double estimateFreq(const std::vector<float>& x, int sr, double expected) {
+    const int a = sr / 10, b = sr * 4 / 10;
+    const int minLag = static_cast<int>(sr / (expected * 1.6));
+    const int maxLag = static_cast<int>(sr / (expected / 1.6)) + 2;
+    std::vector<double> r(static_cast<size_t>(maxLag) + 2, 0.0);
+    for (int lag = minLag; lag <= maxLag; ++lag) {
+        double s = 0.0;
+        for (int i = a; i < b; ++i) s += static_cast<double>(x[i]) * x[i + lag];
+        r[lag] = s;
+    }
+    int best = minLag;
+    for (int lag = minLag; lag <= maxLag; ++lag) {
+        if (r[lag] > r[best]) best = lag;
+    }
+    double lagF = best;
+    if (best > minLag && best < maxLag) {  // nội suy parabol để có độ chính xác dưới 1 mẫu
+        const double y0 = r[best - 1], y1 = r[best], y2 = r[best + 1];
+        const double den = y0 - 2.0 * y1 + y2;
+        if (den != 0.0) lagF += 0.5 * (y0 - y2) / den;
+    }
+    return sr / lagF;
+}
+
+static void testPitchAccuracy() {
+    begin("Cao độ đúng (sai số < 6 cent) cho piano / bass / guitar mộc / guitar điện");
+    const int sr = 48000;
+    struct Case {
+        Inst inst;
+        const char* name;
+        int notes[5];
+    };
+    const Case cases[] = {
+        {Inst::Piano, "Piano", {36, 48, 60, 72, 84}},
+        {Inst::Bass, "Bass", {28, 36, 43, 48, 55}},
+        {Inst::AcousticGuitar, "Acoustic", {40, 48, 60, 72, 84}},
+        {Inst::ElectricGuitar, "Electric", {40, 48, 60, 72, 84}},
+    };
+    for (const Case& c : cases) {
+        double worst = 0.0;
+        for (int note : c.notes) {
+            EngineCore core;
+            core.prepare(sr, 1);
+            core.noteOn(static_cast<int>(c.inst), 0, note, 100);
+            const auto out = renderAll(core, 1, sr, 480);
+            const double f = 440.0 * std::pow(2.0, (note - 69) / 12.0);
+            const double est = estimateFreq(out, sr, f);
+            const double cents = 1200.0 * std::log2(est / f);
+            worst = std::max(worst, std::fabs(cents));
+            CHECK(std::fabs(cents) < 6.0, "%s note %d: %.2f Hz vs %.2f Hz (%.1f cents)", c.name, note, est, f, cents);
+            CHECK(peak(out, 0, out.size()) > 0.03f, "%s note %d too quiet", c.name, note);
+        }
+        std::printf("    %s: sai số cao độ tối đa %.1f cent\n", c.name, worst);
+    }
+}
+
+static void testDrumPieces() {
+    begin("9 bộ phận trống x 2 kiểu: có tiếng, hữu hạn, trong [-1, 1], tự tắt sau vài giây");
+    for (Inst kit : {Inst::DrumKit, Inst::DrumPad}) {
+        for (int piece = 0; piece < kDrumPieces; ++piece) {
+            EngineCore core;
+            core.prepare(48000, 1);
+            core.noteOn(static_cast<int>(kit), 0, piece, 110);
+            const auto out = renderAll(core, 1, 48000 * 4, 480);
+            bool ok = true;
+            for (float s : out) ok = ok && std::isfinite(s) && std::fabs(s) <= 1.0f;
+            CHECK(ok, "kit %d piece %d out of range", static_cast<int>(kit), piece);
+            CHECK(peak(out, 0, 4800) > 0.05f, "kit %d piece %d silent", static_cast<int>(kit), piece);
+            CHECK(core.activeVoiceCount() == 0, "kit %d piece %d never ended", static_cast<int>(kit), piece);
+        }
+    }
+}
+
+static void testHatChoke() {
+    begin("Hi-hat đóng chặn hi-hat mở");
     EngineCore core;
     core.prepare(48000, 1);
-    core.noteOn(60, 100);
+    core.noteOn(static_cast<int>(Inst::DrumKit), 0, kHatOpen, 100);
+    renderAll(core, 1, 2400, 480);
+    core.noteOn(static_cast<int>(Inst::DrumKit), 0, kHatClosed, 100);
+    renderAll(core, 1, 48000 / 2, 480);
+    CHECK(core.activeVoiceCount() == 0, "open hat still ringing (%d voices)", core.activeVoiceCount());
+}
+
+static void testLiveNoteLifecycle() {
+    begin("Nốt chạm tay: bật có tiếng, nhả thì tắt hẳn");
+    EngineCore core;
+    core.prepare(48000, 1);
+    core.noteOn(static_cast<int>(Inst::Piano), 0, 60, 100);
     const auto on = renderAll(core, 1, 4800, 480);
-    CHECK(peak(on, 0, on.size()) > 0.05f, "note produced no sound");
+    CHECK(peak(on, 0, on.size()) > 0.05f, "no sound");
     CHECK(core.activeVoiceCount() == 1, "expected 1 voice, got %d", core.activeVoiceCount());
-    core.noteOff(60);
+    core.noteOff(0, 60);
     const auto off = renderAll(core, 1, 48000 * 2, 480);
-    CHECK(core.activeVoiceCount() == 0, "voice not released, %d active", core.activeVoiceCount());
+    CHECK(core.activeVoiceCount() == 0, "voice not released");
     CHECK(off.back() == 0.0f, "tail not silent");
 }
 
-static void testVoiceStealingAndBounds() {
-    begin("40 nốt cùng lúc: tối đa 16 voice, đầu ra hữu hạn và nằm trong [-1, 1]");
-    EngineCore core;
-    core.prepare(48000, 1);
-    for (int i = 0; i < 40; ++i) core.noteOn(36 + i, 127);
-    const auto out = renderAll(core, 1, 48000, 256);
-    CHECK(core.activeVoiceCount() == 16, "expected 16 voices, got %d", core.activeVoiceCount());
-    bool bounded = true;
-    for (float s : out) bounded = bounded && std::isfinite(s) && std::fabs(s) <= 1.0f;
-    CHECK(bounded, "output out of range or non-finite");
-}
-
-static void testStereoDuplicates() {
-    begin("Đầu ra stereo: hai kênh giống nhau");
+static void testVoiceStealing() {
+    begin("Hơn 32 nốt cùng lúc: tối đa 32 voice, đầu ra hữu hạn và trong [-1, 1]");
     EngineCore core;
     core.prepare(48000, 2);
-    core.noteOn(60, 100);
-    core.setPlaying(true);
-    const auto out = renderAll(core, 2, 4800, 480);
-    bool same = true;
-    for (size_t i = 0; i + 1 < out.size(); i += 2) same = same && out[i] == out[i + 1];
-    CHECK(same, "channels differ");
+    for (int i = 0; i < 80; ++i) {
+        core.noteOn(i % 4 == 0 ? 0 : (i % 4 == 1 ? 1 : (i % 4 == 2 ? 2 : 3)), i % kMaxTracks, 36 + (i % 40), 127);
+        if (i % 20 == 19) renderAll(core, 2, 64, 64);  // lệnh vào hàng đợi có sức chứa hữu hạn
+    }
+    const auto out = renderAll(core, 2, 48000, 256);
+    CHECK(core.activeVoiceCount() <= kMaxVoices, "too many voices: %d", core.activeVoiceCount());
+    bool ok = true;
+    for (float s : out) ok = ok && std::isfinite(s) && std::fabs(s) <= 1.0f;
+    CHECK(ok, "output out of range or non-finite");
 }
 
-static void testQueueOverflow() {
-    begin("Hàng đợi đầy: từ chối lệnh thay vì làm hỏng bộ nhớ");
+static void testQueueOverflowAndDecode() {
+    begin("Hàng đợi đầy từ chối lệnh; decodeSong từ chối dữ liệu hỏng");
     EngineCore core;
     core.prepare(48000, 1);
     int rejected = 0;
-    for (int i = 0; i < 1000; ++i) rejected += core.noteOn(60, 100) ? 0 : 1;
+    for (int i = 0; i < 1000; ++i) rejected += core.noteOn(0, 0, 60, 100) ? 0 : 1;
     CHECK(rejected > 0, "queue never filled");
-    renderAll(core, 1, 480, 480);  // phải chạy ổn
-    CHECK(core.noteOn(60, 100), "queue should accept commands after being drained");
+    renderAll(core, 1, 480, 480);
+    CHECK(core.noteOn(0, 0, 60, 100), "queue should accept commands after draining");
+
+    const std::vector<int32_t> bad1 = {2, 0, 0, 0, 0, 0};                    // sai phiên bản
+    const std::vector<int32_t> bad2 = {1, 0, 0, 0, 0, 1, 0, 5, 0, 1, 60, 1};  // khai 5 nốt nhưng chỉ có 1
+    const std::vector<int32_t> bad3 = {1, 0, 0, 0, 0, 9};                    // quá nhiều track
+    const std::vector<int32_t> bad4 = {1, 0, 0, 0, 0, 1, 99, 0};              // nhạc cụ không tồn tại
+    CHECK(decodeSong(bad1.data(), static_cast<int>(bad1.size())) == nullptr, "bad version accepted");
+    CHECK(decodeSong(bad2.data(), static_cast<int>(bad2.size())) == nullptr, "truncated accepted");
+    CHECK(decodeSong(bad3.data(), static_cast<int>(bad3.size())) == nullptr, "too many tracks accepted");
+    CHECK(decodeSong(bad4.data(), static_cast<int>(bad4.size())) == nullptr, "bad instrument accepted");
+    CHECK(decodeSong(nullptr, 0) == nullptr, "null accepted");
+
+    const auto ok = encode(false, 0, 0, 0, {{Inst::Piano, {{480, 10, 64, 100}, {0, 10, 60, 100}}}});
+    Song* s = decodeSong(ok.data(), static_cast<int>(ok.size()));
+    CHECK(s && s->tracks[0].notes.size() == 2 && s->tracks[0].notes[0].start == 0, "notes not sorted by start");
+    delete s;
+}
+
+static void testCpuBudget() {
+    begin("Tải CPU: 32 voice guitar/piano/trống cùng lúc, 10 giây âm thanh");
+    EngineCore core;
+    core.prepare(48000, 2);
+    for (int i = 0; i < 32; ++i) {
+        core.noteOn(i % 3 == 0 ? 1 : (i % 3 == 1 ? 2 : 0), i % kMaxTracks, 40 + i, 100);
+        if (i % 16 == 15) renderAll(core, 2, 16, 16);
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    renderAll(core, 2, 48000 * 10, 256);
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("    10 s âm thanh tốn %.3f s CPU máy tính (%.1fx nhanh hơn thời gian thực)\n", secs, 10.0 / secs);
+    CHECK(secs < 3.0, "too slow: %.2f s", secs);
+}
+
+// ---- Lọc ồn ---------------------------------------------------------------------------
+
+static std::vector<float> makeNoisyTone(int sr, int seconds, uint32_t seed, std::vector<float>* clean) {
+    const int n = sr * seconds;
+    std::vector<float> x(n), c(n, 0.0f);
+    uint32_t s = seed;
+    auto rnd = [&]() {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        return static_cast<float>(static_cast<int32_t>(s)) / 2147483648.0f;
+    };
+    const double t0 = 1.5, t1 = 3.5;
+    for (int i = 0; i < n; ++i) {
+        const double t = static_cast<double>(i) / sr;
+        if (t >= t0 && t < t1) {
+            const double fade = std::min({1.0, (t - t0) / 0.02, (t1 - t) / 0.02});
+            c[i] = static_cast<float>(0.3 * fade * (std::sin(2 * 3.14159265358979 * 440.0 * t) +
+                                                    0.5 * std::sin(2 * 3.14159265358979 * 880.0 * t)) / 1.5);
+        }
+        x[i] = c[i] + 0.04f * rnd();  // nhiễu trắng ~ -31 dBFS
+    }
+    if (clean) *clean = c;
+    return x;
+}
+
+static void checkDenoise(const char* label, std::vector<float> x, const std::vector<float>& clean, int sr,
+                         const float* noiseOnly, int noiseCount, float strength) {
+    const std::vector<float> before = x;
+    DenoiseParams p;
+    p.strength = strength;
+    denoise(x, sr, p, noiseOnly, noiseCount);
+    CHECK(x.size() == before.size(), "length changed");
+    const size_t a0 = static_cast<size_t>(0.2 * sr), a1 = static_cast<size_t>(1.2 * sr);
+    const size_t b0 = static_cast<size_t>(3.9 * sr), b1 = static_cast<size_t>(4.8 * sr);
+    const double nBefore = (rms(before, a0, a1) + rms(before, b0, b1)) / 2.0;
+    const double nAfter = (rms(x, a0, a1) + rms(x, b0, b1)) / 2.0;
+    const double reduction = 20.0 * std::log10(nBefore / std::max(nAfter, 1e-12));
+    const size_t t0 = static_cast<size_t>(1.8 * sr), t1 = static_cast<size_t>(3.2 * sr);
+    const double toneDb = 20.0 * std::log10(rms(x, t0, t1) / rms(clean, t0, t1));
+    std::printf("    %s: giảm nhiễu %.1f dB, tín hiệu thay đổi %+.2f dB\n", label, reduction, toneDb);
+    CHECK(reduction >= 12.0, "%s: noise reduction only %.1f dB", label, reduction);
+    CHECK(toneDb > -1.5 && toneDb < 1.0, "%s: tone level changed by %.2f dB", label, toneDb);
+}
+
+static void testDenoise() {
+    begin("Lọc ồn: giảm >= 12 dB nhiễu nền, giữ nguyên tiếng (+-1.5 dB)");
+    const int sr = 44100;
+    std::vector<float> clean;
+    const auto x = makeNoisyTone(sr, 5, 12345u, &clean);
+    checkDenoise("tự tìm mẫu nhiễu", x, clean, sr, nullptr, 0, 0.7f);
+    std::vector<float> room;  // 1 giây "im lặng" thu riêng
+    {
+        std::vector<float> dummy;
+        auto n = makeNoisyTone(sr, 5, 999u, &dummy);
+        room.assign(n.begin() + static_cast<long>(0.1 * sr), n.begin() + static_cast<long>(1.1 * sr));
+    }
+    checkDenoise("mẫu nhiễu thu riêng", x, clean, sr, room.data(), static_cast<int>(room.size()), 0.7f);
+}
+
+static void testDenoiseNoOpAndSafety() {
+    begin("Lọc ồn: strength = 0 và không HPF thì giữ nguyên; tín hiệu quá ngắn không lỗi");
+    std::vector<float> x(44100, 0.0f);
+    for (size_t i = 0; i < x.size(); ++i) x[i] = 0.2f * std::sin(0.05f * static_cast<float>(i));
+    const auto before = x;
+    DenoiseParams p;
+    p.strength = 0.0f;
+    p.highpassHz = 0.0f;
+    denoise(x, 44100, p);
+    CHECK(x == before, "should be unchanged");
+    std::vector<float> tiny(500, 0.1f);
+    DenoiseParams q;
+    denoise(tiny, 44100, q);
+    CHECK(tiny.size() == 500, "tiny buffer changed size");
+    std::vector<float> silent(44100 * 2, 0.0f);
+    denoise(silent, 44100, q);
+    bool finite = true;
+    for (float s : silent) finite = finite && std::isfinite(s);
+    CHECK(finite, "silence produced NaN");
+}
+
+
+// ---- Kiểm chứng cơ chế đồng bộ (mục 9 của yêu cầu: prototype trước khi mở rộng) -----------
+
+// 1 ô nhịp lặp: trống (hi-hat 4 phách), bass (2 nốt), piano (2 hợp âm).
+static std::vector<int32_t> syncSong(bool withDrums = true) {
+    std::vector<N> hats;
+    if (withDrums) hats = {{0, 120, kHatClosed, 100}, {960, 120, kHatClosed, 100}, {1920, 120, kHatClosed, 100}, {2880, 120, kHatClosed, 100}};
+    return encode(true, 0, 3840, 3840,
+                  {{Inst::DrumKit, hats},
+                   {Inst::Bass, {{0, 900, 36, 100}, {1920, 900, 43, 100}}},
+                   {Inst::Piano, {{0, 1800, 60, 90}, {0, 1800, 64, 90}, {1920, 1800, 62, 90}, {1920, 1800, 65, 90}}}});
+}
+
+static void testSyncBitExactLoops() {
+    begin("Đồng bộ: trống + bass + piano lặp 8 vòng, các vòng 2..6 giống hệt từng bit");
+    std::unique_ptr<EngineCore> core(newMono(48000, 120.0f, false));
+    publish(*core, syncSong());
+    core->play(0);
+    const size_t L = 96000;
+    const auto out = renderAll(*core, 1, static_cast<int>(L) * 8, 480);
+    for (size_t k = 3; k <= 6; ++k) {
+        CHECK(std::memcmp(out.data() + 2 * L, out.data() + k * L, L * sizeof(float)) == 0, "loop %zu differs from loop 2", k);
+    }
+    CHECK(peak(out, 2 * L, L) > 0.05f, "mix is silent");
+}
+
+static void testSyncAcrossTempoChange() {
+    begin("Đồng bộ: đổi BPM giữa chừng, trống / bass / piano vẫn rơi cùng một khung hình");
+    // Mỗi track chỉ có một sự kiện ngắn ở vị trí cố định của ô nhịp để dò khởi đầu nốt cho sạch.
+    const auto song = encode(true, 0, 3840, 3840,
+                             {{Inst::DrumKit, {{0, 120, kHatClosed, 100}, {2880, 120, kHatClosed, 100}}},
+                              {Inst::Bass, {{0, 120, 36, 100}}},
+                              {Inst::Piano, {{2880, 120, 60, 100}}}});
+    auto run = [&](int soloTrack) {
+        std::unique_ptr<EngineCore> core(newMono(48000, 100.0f, false));
+        for (int t = 0; t < 3; ++t) core->setTrackMix(t, 0.8f, 0.0f, false, t == soloTrack);
+        publish(*core, song);
+        core->play(0);
+        std::vector<float> out = renderAll(*core, 1, 100000, 480);
+        core->setBpm(140.0f);
+        auto a = renderAll(*core, 1, 100000, 480);
+        out.insert(out.end(), a.begin(), a.end());
+        core->setBpm(75.0f);
+        auto b = renderAll(*core, 1, 200000, 480);
+        out.insert(out.end(), b.begin(), b.end());
+        return out;
+    };
+    const auto d = findOnsets(run(0)), b = findOnsets(run(1)), p = findOnsets(run(2));
+    std::printf("    trống %zu, bass %zu, piano %zu khởi đầu nốt\n", d.size(), b.size(), p.size());
+    CHECK(b.size() >= 3 && p.size() >= 3, "too few events: bass %zu piano %zu", b.size(), p.size());
+    long worst = 0;
+    for (size_t i = 0; i < std::min(b.size(), p.size()); ++i) {
+        if (2 * i + 1 >= d.size()) break;
+        worst = std::max(worst, std::labs(static_cast<long>(b[i] - d[2 * i])));
+        worst = std::max(worst, std::labs(static_cast<long>(p[i] - d[2 * i + 1])));
+    }
+    std::printf("    lệch lớn nhất giữa các track: %ld khung hình (%.2f ms)\n", worst, worst * 1000.0 / 48000.0);
+    CHECK(worst <= 8, "tracks drifted apart by %ld frames after tempo changes", worst);
+}
+
+static void testMuteDoesNotShiftOthers() {
+    begin("Đồng bộ: tắt/bật track trống giữa chừng không làm lệch bass và nhịp trống sau khi bật lại");
+    auto run = [](bool withDrums, bool toggleMute) {
+        std::unique_ptr<EngineCore> core(newMono(48000, 120.0f, false));
+        publish(*core, syncSong(withDrums));
+        core->play(0);
+        std::vector<float> out = renderAll(*core, 1, 48000 * 3, 480);
+        if (toggleMute) core->setTrackMix(0, 0.8f, 0.0f, true, false);
+        auto a = renderAll(*core, 1, 48000 * 3, 480);
+        out.insert(out.end(), a.begin(), a.end());
+        if (toggleMute) core->setTrackMix(0, 0.8f, 0.0f, false, false);
+        auto b = renderAll(*core, 1, 48000 * 6, 480);
+        out.insert(out.end(), b.begin(), b.end());
+        return out;
+    };
+    const auto base = run(true, false), muted = run(true, true), noDrums = run(false, false);
+    auto maxDiff = [](const std::vector<float>& x, const std::vector<float>& y, size_t a, size_t b) {
+        float m = 0.0f;
+        for (size_t i = a; i < b; ++i) m = std::max(m, std::fabs(x[i] - y[i]));
+        return m;
+    };
+    const float whileMuted = maxDiff(muted, noDrums, 48000 * 9 / 2, 48000 * 59 / 10);
+    const float afterUnmute = maxDiff(muted, base, 48000 * 15 / 2, 48000 * 12);
+    std::printf("    đang tắt: lệch so với bài không có trống = %.2e; sau khi bật lại: lệch so với bản không tắt = %.2e\n",
+                whileMuted, afterUnmute);
+    CHECK(whileMuted < 1e-4f, "bass/piano changed while drums muted (%.2e)", whileMuted);
+    CHECK(afterUnmute < 1e-4f, "drum phase shifted after unmute (%.2e)", afterUnmute);
+}
+
+static void testRawMidiPlaysAtExactTick() {
+    begin("MIDI thô (chưa quantize): nốt ở tick 13 và 977 phát đúng khung hình 325 và 24425");
+    std::unique_ptr<EngineCore> core(newMono(48000, 120.0f, false));
+    publish(*core, encode(false, 0, 0, 0, {{Inst::DrumKit, {{13, 60, kHatClosed, 100}, {977, 60, kHatClosed, 100}}}}));
+    core->play(0);
+    const auto onsets = findOnsets(renderAll(*core, 1, 48000, 480));
+    CHECK(onsets.size() == 2, "expected 2 hits, got %zu", onsets.size());
+    if (onsets.size() == 2) CHECK(onsets[0] == 325 && onsets[1] == 24425, "hits at %lld, %lld", (long long)onsets[0], (long long)onsets[1]);
 }
 
 int main() {
     testExactBeatsAt120();
     testNoDriftAtOddTempo();
-    testChunkInvariance();
     testTempoChange();
-    testAccent();
-    testMetronomeOffAndStop();
-    testNoteLifecycle();
-    testVoiceStealingAndBounds();
-    testStereoDuplicates();
-    testQueueOverflow();
+    testAccentAndStop();
+    testSequencedOnsetExact();
+    testLoopExact();
+    testLoopNoDriftNonInteger();
+    testEndOfSong();
+    testChunkInvariance();
+    testSongSwapWhilePlaying();
+    testMuteSolo();
+    testPan();
+    testPitchAccuracy();
+    testDrumPieces();
+    testHatChoke();
+    testLiveNoteLifecycle();
+    testVoiceStealing();
+    testQueueOverflowAndDecode();
+    testCpuBudget();
+    testSyncBitExactLoops();
+    testSyncAcrossTempoChange();
+    testMuteDoesNotShiftOthers();
+    testRawMidiPlaysAtExactTick();
+    testDenoise();
+    testDenoiseNoOpAndSafety();
 
     if (g_failures == 0) {
         std::printf("\nALL %d TESTS PASSED\n", g_tests);
