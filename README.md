@@ -1,50 +1,56 @@
 # BandStudio
 
-Phòng thu âm nhạc cá nhân trên Android: **offline, miễn phí, không quảng cáo, không tài khoản**.
-Đây là bản **nền tảng âm thanh** (giai đoạn 1): metronome chính xác theo sample, synth nhiều nốt, bàn phím piano cảm ứng.
+Phòng thu âm nhạc cá nhân trên Android, theo hướng mini DAW kiểu BandLab: **offline, miễn phí, không quảng cáo, không tài khoản**. Manifest không khai báo quyền INTERNET.
+
+## Cách dùng
+
+1. **Danh sách** → *Tạo bản nhạc mới*.
+2. **Studio** (màn hình chính): *Thêm nhạc cụ* (Piano, Acoustic Guitar, Electric Guitar, Bass, Drum Kit, Drum Pad). Mỗi nhạc cụ là một track; M = tắt tiếng, S = nghe riêng; chạm tên track để chỉnh âm lượng / pan.
+3. Chạm vào **ô trống** trên track để tạo clip (2 ô nhịp). Chạm clip để chọn, chạm lần nữa (hoặc *Sửa*) để mở trình soạn. *Nhân đôi / Lùi / Tiến / ± ô / Xóa* nằm ở thanh dưới.
+4. **Trình soạn**: Piano Roll + phím (nhạc cụ giai điệu), hoặc Step Sequencer + Drum Pad (trống). Đoạn đang sửa phát lặp, các track khác vẫn chạy làm nền. Bấm ● để ghi trực tiếp.
+5. Quay lại Studio, đặt BPM, bấm Phát. Chạm số ô nhịp trên thước để đổi vị trí phát; *Lặp* để lặp cả bài.
+
+Dự án tự lưu trên máy (JSON trong bộ nhớ riêng của ứng dụng). Có Undo / Redo.
 
 ## Dựng APK bằng GitHub Actions
 
-1. Tạo repo mới trên GitHub, giải nén dự án này và đẩy toàn bộ lên nhánh `main`.
-2. Vào tab **Actions** → workflow **Build APK** tự chạy (hoặc bấm **Run workflow**).
-3. Khi xong, mở lần chạy đó → mục **Artifacts** → tải `BandStudio-apk` → giải nén ra `app-release.apk`.
-4. Chép sang điện thoại và cài (cho phép "cài ứng dụng từ nguồn không xác định").
+Đẩy lên `main` (hoặc *Run workflow*), mở lần chạy → **Artifacts** → `BandStudio-apk`. Workflow chạy 3 thứ theo thứ tự: kiểm thử lõi C++ (g++), unit test Kotlin, rồi dựng APK. APK ký bằng khóa debug để cài thử; khi phát hành hãy tạo khóa riêng.
 
-Workflow chạy 2 job: `native-tests` (kiểm thử lõi âm thanh bằng g++, vài giây) rồi mới `apk`.
-APK đang ký bằng khóa debug để cài thử được ngay; khi phát hành thật hãy tạo khóa riêng.
-
-## Cấu trúc
+## Kiến trúc
 
 ```
 app/src/main/cpp/
-  engine_core.h/.cpp   Lõi: lập lịch nhịp, metronome, synth. KHÔNG phụ thuộc Android/Oboe
-  audio_engine.h/.cpp  Nối lõi với luồng âm thanh Oboe (mở lại stream khi rút tai nghe)
-  spsc_queue.h         Hàng đợi lock-free UI -> luồng âm thanh
-  jni_bridge.cpp       Cầu JNI
+  engine_core.*     Engine trung tâm: BPM, vị trí phát, lịch sự kiện theo tick, loop, mixer. KHÔNG phụ thuộc Android
+  voices.h          Tổng hợp tạm cho 6 nhạc cụ (harmonic, Karplus-Strong, trống). Về sau thay bằng sampler SoundFont
+  song.h            Dữ liệu bài nhạc bất biến, UI -> luồng âm thanh qua con trỏ nguyên tử
+  noise_reducer.*   Lọc ồn ngoại tuyến (trừ phổ) cho bản thu giọng hát
+  audio_engine.*    Nối engine với luồng Oboe (tự mở lại khi rút/cắm tai nghe)
+  spsc_queue.h      Hàng đợi lock-free UI -> luồng âm thanh
 app/src/main/java/com/bandstudio/app/
-  audio/AudioEngine.kt Khai báo JNI
-  StudioViewModel.kt   Trạng thái UI
-  ui/                  Giao diện Jetpack Compose (transport, bàn phím)
-native-tests/core_test.cpp   10 bài kiểm thử lõi âm thanh chạy trên máy tính
+  model/            Project / Track / Clip / Note, Quantizer, mã hóa gửi engine, lưu JSON
+  StudioViewModel   Trạng thái, Undo/Redo, ghi MIDI có bù độ trễ
+  ui/               Home, Studio (timeline), Editor (Piano Roll, Drum Sequencer, Pad, phím)
+native-tests/core_test.cpp   25 bài kiểm thử lõi
+app/src/test/               Unit test Kotlin (Quantizer, mã hóa bài nhạc)
 ```
 
-## Nguyên tắc thiết kế (giữ nguyên khi mở rộng)
+**Nguyên tắc**: chỉ có MỘT đồng hồ, nằm trong engine. Vị trí = `baseBeat + frames × beatsPerFrame` tính từ số nguyên nên không trôi nhịp; track chỉ là dữ liệu mà engine phát theo tick, nên không nhạc cụ nào có bộ đếm riêng. Callback âm thanh không cấp phát, không khóa, không JNI. Hạt giống nhiễu của nốt lấy từ (tick, track, nốt) nên mỗi vòng lặp giống hệt nhau từng bit.
 
-- **Callback âm thanh là vùng cấm**: không cấp phát, không khóa mutex, không JNI, không log. UI chỉ nói chuyện với engine qua `SpscQueue` và biến nguyên tử.
-- **Thời gian tính bằng khung hình (sample), không bằng mili giây.** Vị trí phách = `baseBeat + frames × beatsPerFrame` tính từ số nguyên nên không trôi nhịp; đổi tempo thì "rebase" để liên tục. Bài test xác nhận phách rơi đúng khung hình và kết quả giống hệt từng bit với mọi kích thước buffer.
-- **`EngineCore` tách khỏi Oboe** để test trên máy tính và để xuất bản phối sau này chỉ cần gọi `render()` trong vòng lặp offline.
-- Manifest **không có quyền INTERNET**, nên ứng dụng không thể gửi dữ liệu đi đâu.
+## Đã kiểm chứng (prototype đồng bộ, mục 9 của yêu cầu)
 
-## Lộ trình tiếp theo
+| Yêu cầu | Kết quả test |
+|---|---|
+| Track trống chạy loop | Hit rơi đúng khung hình, kể cả độ dài vòng lẻ (133 BPM / 44.1 kHz, 20 vòng, lệch < 1 khung hình) |
+| Bass chạy đồng bộ với trống | Trống + bass + piano lặp 8 vòng: các vòng giống hệt từng bit |
+| Piano ghi và phát MIDI | Nốt ở tick thô (13, 977) phát đúng khung hình; Quantize 1/4, 1/8, 1/16, 1/32 qua unit test |
+| Đổi BPM các track vẫn đồng bộ | Sau 2 lần đổi BPM, lệch giữa các track ≤ 3 khung hình (0.06 ms) |
+| Bật/tắt track không làm lệch track khác | Tắt rồi bật track trống: bass không đổi (sai lệch 0), nhịp trống sau khi bật lại lệch ≤ 5e-6 |
 
-1. Sequencer theo tick (`kPpq = 960`): clip chứa nốt, phát đúng sample, vòng lặp.
-2. Sampler đọc SoundFont/SF2 thay synth thử (piano, guitar, bass, bộ trống).
-3. Piano Roll + Quantize + Scale Lock; Drum Sequencer.
-4. Lưu/mở dự án (`project.json` + WAV), Undo/Redo.
-5. Mixer, thu âm (input Oboe, bù độ trễ), hiệu ứng, xuất WAV/MP3.
+Ngoài ra: cao độ 4 nhạc cụ giai điệu sai ≤ 2.4 cent; 32 voice cùng lúc chạy nhanh hơn thời gian thực ~100 lần trên máy tính; chạy sạch dưới ASan/UBSan; lọc ồn giảm ~19 dB nhiễu nền, giữ tiếng trong ±1 dB.
 
-## Giới hạn hiện tại
+## Chưa có
 
-- Chỉ có một âm sắc synth tạm; chưa có sampler thật, chưa thu âm, chưa lưu dự án.
-- Độ trễ phụ thuộc máy; dòng thông tin trên màn hình hiển thị độ trễ ước tính và số xrun để bạn theo dõi.
-- Giao diện đang để chữ tiếng Việt trực tiếp trong code; sẽ chuyển sang `strings.xml` khi cần đa ngôn ngữ.
+- Âm sắc hiện là tổng hợp tạm; chưa có sampler SoundFont.
+- Chưa thu giọng hát, chưa nối bộ lọc ồn vào micro, chưa có hiệu ứng (EQ, reverb), chưa xuất WAV/MP3.
+- Guitar chưa có chế độ chọn hợp âm / quạt dây; chưa có thư viện Pattern lưu dùng lại; chưa chỉnh vùng lặp bắt đầu/kết thúc tùy ý; chưa kéo-thả clip và kéo dài nốt.
+- Giao diện **chưa được chạy thử trên máy thật** (CI chỉ xác nhận biên dịch và test). Cần xem độ trễ, xrun và cảm giác chạm trên điện thoại.
