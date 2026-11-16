@@ -97,14 +97,16 @@ data class Project(
 
 /**
  * Đóng gói bài nhạc thành mảng int cho engine C++ (xem decodeSong trong engine_core.h):
- * [2, loop, loopStart, loopEnd, length, trackCount, rồi mỗi track: inst, kitCount, kitCount * 17 số của Patch,
- * noteCount, noteCount * (start, dur, pitch, vel)]. kit chỉ có ở track Looper (các track khác kitCount = 0).
+ * [3, loop, loopStart, loopEnd, length, trackCount, rồi mỗi track: inst, kitCount, kitCount * 17 số của Patch,
+ * padCount, mỗi pad: len, hitCount, hitCount * (start, vel, kitIdx), noteCount, noteCount * (start, dur, pitch, vel)].
+ * kit và pad chỉ có ở track Looper (các track khác = 0). [launcherTrackId] != null: chế độ lưới Looper, chỉ nhịp pad
+ * của track đó phát, mọi track khác (và clip của chính nó) bị bỏ nốt nhưng giữ nguyên chỉ số track.
  * Nốt của mọi clip được trải ra tick tuyệt đối trong bài; nốt vượt quá độ dài clip bị bỏ / cắt.
  */
-fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length: Int): IntArray {
+fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length: Int, launcherTrackId: Int? = null): IntArray {
     val used = tracks.take(MAX_TRACKS)
     val out = ArrayList<Int>()
-    out.add(2)
+    out.add(3)
     out.add(if (loop) 1 else 0)
     out.add(loopStart)
     out.add(loopEnd)
@@ -113,7 +115,7 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
     for (t in used) {
         val flat = ArrayList<Int>()
         var count = 0
-        for (c in t.clips) {
+        for (c in if (launcherTrackId != null) emptyList() else t.clips) {
             val base = c.startBar * BAR_TICKS
             val limit = c.lengthTicks
             for (n in c.notes) {
@@ -129,6 +131,18 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
         val kit = if (t.instrument.isLooper) t.kit.take(MAX_KIT) else emptyList()
         out.add(kit.size)
         for (pad in kit) Catalog.patchFor(pad).encodeTo(out)
+        if (t.instrument.isLooper && kit.isNotEmpty()) {
+            val family = Catalog.genre(t.genreId)?.family ?: ""
+            out.add(PAD_COUNT)
+            for (pad in 0 until PAD_COUNT) {
+                val hits = Patterns.hits(family, pad)
+                out.add(Patterns.LEN_TICKS)
+                out.add(hits.size)
+                for (h in hits) { out.add(h.step * STEP_TICKS); out.add(h.vel); out.add(h.kitIdx) }
+            }
+        } else {
+            out.add(0)
+        }
         out.add(count)
         out.addAll(flat)
     }

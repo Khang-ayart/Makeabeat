@@ -36,6 +36,19 @@ object AudioEngine {
     external fun noteOff(track: Int, note: Int)
     external fun allNotesOff()
 
+    // ---- Looper: pad nhịp lặp ----
+    /** Bật pad (>= 0) hoặc tắt hàng (-1). Có hiệu lực ở đầu ô nhịp kế tiếp. Trả false nếu hàng/pad sai. */
+    external fun padLaunch(track: Int, row: Int, pad: Int): Boolean
+
+    /** Bật/tắt báo sự kiện: mỗi cú đánh do pad phát ra được đưa vào hàng đợi cho [popPadEvent]. */
+    external fun setPadRecording(on: Boolean)
+
+    /** Lấy một sự kiện vào [out] = {tick, track, kitIdx, vel}; false nếu hết. */
+    external fun popPadEvent(out: IntArray): Boolean
+
+    /** Bit 0-19: pad đang chạy; 20-39: đang chờ bật; 40-59: đang chờ tắt. */
+    external fun padMask(track: Int): Long
+
     // ---- Trạng thái ----
     /** Vị trí hiện tại tính bằng phách (0.0 khi đang dừng). */
     external fun beatPosition(): Double

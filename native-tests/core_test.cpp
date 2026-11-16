@@ -42,20 +42,39 @@ struct N {
     int start, dur, pitch, vel;
 };
 using Kit = std::vector<std::array<int32_t, kPatchInts>>;
+struct Hit {
+    int start, vel, kitIdx;
+};
+struct PadSpec {
+    int len;
+    std::vector<Hit> hits;
+};
 struct TrackSpec {
     Inst inst;
     std::vector<N> notes;
     Kit kit;
-    TrackSpec(Inst i, std::vector<N> n, Kit k = {}) : inst(i), notes(std::move(n)), kit(std::move(k)) {}
+    std::vector<PadSpec> pads;
+    TrackSpec(Inst i, std::vector<N> n, Kit k = {}, std::vector<PadSpec> p = {})
+        : inst(i), notes(std::move(n)), kit(std::move(k)), pads(std::move(p)) {}
 };
 
-// Định dạng v2: [2, loop, ls, le, len, trackCount, mỗi track: inst, kitCount, kit..., noteCount, notes...]
+// Định dạng v3: [3, loop, ls, le, len, trackCount, mỗi track: inst, kitCount, kit..., padCount, pads..., noteCount, notes...]
 static std::vector<int32_t> encode(bool loop, int ls, int le, int len, const std::vector<TrackSpec>& tracks) {
-    std::vector<int32_t> d = {2, loop ? 1 : 0, ls, le, len, static_cast<int32_t>(tracks.size())};
+    std::vector<int32_t> d = {3, loop ? 1 : 0, ls, le, len, static_cast<int32_t>(tracks.size())};
     for (const auto& t : tracks) {
         d.push_back(static_cast<int32_t>(t.inst));
         d.push_back(static_cast<int32_t>(t.kit.size()));
         for (const auto& p : t.kit) d.insert(d.end(), p.begin(), p.end());
+        d.push_back(static_cast<int32_t>(t.pads.size()));
+        for (const auto& pp : t.pads) {
+            d.push_back(pp.len);
+            d.push_back(static_cast<int32_t>(pp.hits.size()));
+            for (const Hit& h : pp.hits) {
+                d.push_back(h.start);
+                d.push_back(h.vel);
+                d.push_back(h.kitIdx);
+            }
+        }
         d.push_back(static_cast<int32_t>(t.notes.size()));
         for (const N& n : t.notes) {
             d.push_back(n.start);
@@ -449,17 +468,17 @@ static void testQueueOverflowAndDecode() {
     renderAll(core, 1, 480, 480);
     CHECK(core.noteOn(0, 0, 60, 100), "queue should accept commands after draining");
 
-    const std::vector<int32_t> bad1 = {1, 0, 0, 0, 0, 0};                    // sai phiên bản (v1 cũ)
-    const std::vector<int32_t> bad2 = {2, 0, 0, 0, 0, 1, 0, 0, 5, 0, 1, 60, 1};  // khai 5 nốt nhưng chỉ có 1
-    const std::vector<int32_t> bad3 = {2, 0, 0, 0, 0, 9};                    // quá nhiều track
-    const std::vector<int32_t> bad4 = {2, 0, 0, 0, 0, 1, 99, 0, 0};              // nhạc cụ không tồn tại
+    const std::vector<int32_t> bad1 = {2, 0, 0, 0, 0, 0};                    // sai phiên bản (v2 cũ)
+    const std::vector<int32_t> bad2 = {3, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 1, 60, 1};  // khai 5 nốt nhưng chỉ có 1
+    const std::vector<int32_t> bad3 = {3, 0, 0, 0, 0, 9};                    // quá nhiều track
+    const std::vector<int32_t> bad4 = {3, 0, 0, 0, 0, 1, 99, 0, 0, 0};              // nhạc cụ không tồn tại
     CHECK(decodeSong(bad1.data(), static_cast<int>(bad1.size())) == nullptr, "bad version accepted");
     CHECK(decodeSong(bad2.data(), static_cast<int>(bad2.size())) == nullptr, "truncated accepted");
     CHECK(decodeSong(bad3.data(), static_cast<int>(bad3.size())) == nullptr, "too many tracks accepted");
     CHECK(decodeSong(bad4.data(), static_cast<int>(bad4.size())) == nullptr, "bad instrument accepted");
     CHECK(decodeSong(nullptr, 0) == nullptr, "null accepted");
-    std::vector<int32_t> bad5 = {2, 0, 0, 0, 0, 1, 6, 33, 0};  // kit quá lớn
-    std::vector<int32_t> bad6 = {2, 0, 0, 0, 0, 1, 6, 2, 0};   // khai 2 patch nhưng thiếu dữ liệu
+    std::vector<int32_t> bad5 = {3, 0, 0, 0, 0, 1, 6, 33, 0, 0};  // kit quá lớn
+    std::vector<int32_t> bad6 = {3, 0, 0, 0, 0, 1, 6, 2, 0, 0};   // khai 2 patch nhưng thiếu dữ liệu
     CHECK(decodeSong(bad5.data(), static_cast<int>(bad5.size())) == nullptr, "oversized kit accepted");
     CHECK(decodeSong(bad6.data(), static_cast<int>(bad6.size())) == nullptr, "truncated kit accepted");
 
@@ -789,6 +808,126 @@ static void testLooperExtremeParams() {
     CHECK(ok, "non-finite or out-of-range sample");
 }
 
+
+// ---- Looper: pad là nhịp lặp, bật/tắt quantize theo ô nhịp -------------------------------
+
+// 120 BPM, 48 kHz: 1 ô nhịp = 3840 tick = 96000 khung hình; 1 phách = 24000 khung hình.
+static std::vector<PadSpec> padSet(std::initializer_list<std::pair<int, PadSpec>> defs) {
+    std::vector<PadSpec> v(kMaxPads, PadSpec{0, {}});
+    for (const auto& d : defs) v[static_cast<size_t>(d.first)] = d.second;
+    return v;
+}
+
+static std::unique_ptr<EngineCore> padCore(const std::vector<PadSpec>& pads, bool loopOff = true) {
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    (void)loopOff;
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, testKit(), pads)}));
+    renderAll(*core, 1, 64, 64);  // để engine nhận bài nhạc
+    return core;
+}
+
+static void testPadLaunchQuantizedLoop() {
+    begin("Pad lặp: bật khi dừng thì chạy từ đầu; cú đánh rơi đúng khung hình, lặp mỗi ô nhịp; các vòng giống hệt từng bit");
+    auto core = padCore(padSet({{0, {3840, {{0, 100, 1}, {1920, 80, 3}}}}}));
+    core->play(0);
+    core->padLaunch(0, 0, 0);
+    const auto out = renderAll(*core, 1, 96000 * 4 - 5000, 480);
+    const auto on = findOnsets(out);
+    const std::vector<int64_t> want = {0, 48000, 96000, 144000, 192000, 240000, 288000, 336000};
+    CHECK(on.size() == want.size(), "onsets %zu", on.size());
+    for (size_t i = 0; i < on.size() && i < want.size(); ++i)
+        CHECK(std::llabs(on[i] - want[i]) <= 1, "onset %zu at %lld want %lld", i, static_cast<long long>(on[i]), static_cast<long long>(want[i]));
+    bool same = true;
+    for (size_t i = 0; i < 90000; ++i) if (out[96000 + i] != out[192000 + i]) same = false;
+    CHECK(same, "bar 2 and bar 3 differ");
+}
+
+static void testPadMidBarLaunchWaitsForBoundary() {
+    begin("Pad lặp: bật giữa ô nhịp thì chờ đến đầu ô nhịp kế; mask báo chờ rồi chạy");
+    auto core = padCore(padSet({{2, {3840, {{0, 100, 1}}}}}));
+    core->play(960);  // đang ở phách 2 của ô 1
+    renderAll(*core, 1, 480, 480);
+    core->padLaunch(0, 0, 2);
+    renderAll(*core, 1, 480, 480);
+    int64_t m = core->padMask(0);
+    CHECK((m >> 22) & 1, "queued bit missing (mask %llx)", static_cast<unsigned long long>(m));
+    CHECK(!((m >> 2) & 1), "active too early");
+    const auto out = renderAll(*core, 1, 72000 - 960 + 2000, 480);  // qua biên ô nhịp
+    const auto on = findOnsets(out);
+    CHECK(on.size() == 1, "onsets %zu", on.size());
+    if (!on.empty()) {
+        // biên ở tick 3840: 2880 tick sau điểm bắt đầu = 72000 khung hình, trừ phần đã render
+        const int64_t want = 72000 - 960 - 0;
+        CHECK(std::llabs(on[0] - want) <= 1, "onset %lld want %lld", static_cast<long long>(on[0]), static_cast<long long>(want));
+    }
+    m = core->padMask(0);
+    CHECK((m >> 2) & 1, "active bit missing");
+    CHECK(((m >> 22) & 1) == 0, "queued bit not cleared");
+}
+
+static void testPadRowExclusiveSwitchAndStop() {
+    begin("Pad lặp: mỗi hàng một pad (đổi pad ở đầu ô nhịp), bấm tắt thì dừng ở đầu ô nhịp");
+    // pad0: hi-hat đầu ô nhịp. pad1 (cùng hàng): kick ở giữa ô nhịp.
+    auto core = padCore(padSet({{0, {3840, {{0, 100, 1}}}}, {1, {3840, {{1920, 100, 3}}}}}));
+    core->play(0);
+    core->padLaunch(0, 0, 0);
+    renderAll(*core, 1, 144000, 480);               // đến giữa ô 2
+    core->padLaunch(0, 0, 1);                       // chuyển sang pad1, hiệu lực ở 192000
+    auto out = renderAll(*core, 1, 192000 + 60000 - 144000, 480);
+    // hi-hat ở 96000 (đã render ở đoạn trước, nên chỉ cần đoạn này không có hi-hat ở 192000)
+    const auto on = findOnsets(out, 144000);
+    CHECK(on.size() == 1, "onsets %zu", on.size());
+    if (!on.empty()) CHECK(std::llabs(on[0] - (192000 + 48000)) <= 1, "kick at %lld", static_cast<long long>(on[0]));
+
+    // tắt: launch -1 ở giữa, pad dừng từ đầu ô nhịp kế
+    auto core2 = padCore(padSet({{0, {3840, {{0, 100, 1}}}}}));
+    core2->play(0);
+    core2->padLaunch(0, 0, 0);
+    renderAll(*core2, 1, 30000, 480);  // để đuôi hi-hat đầu tiên tắt hẳn
+    core2->padLaunch(0, 0, -1);
+    const auto o2 = renderAll(*core2, 1, 96000 * 3, 480);
+    const auto on2 = findOnsets(o2, 30000);
+    CHECK(on2.empty(), "pad still playing after stop (%zu onsets)", on2.size());
+    CHECK(core2->padMask(0) == 0, "mask not cleared: %llx", static_cast<unsigned long long>(core2->padMask(0)));
+}
+
+static void testPadRowsIndependentAndLengths() {
+    begin("Pad lặp: các hàng chạy độc lập, pad 2 ô nhịp khớp với pad 1 ô nhịp");
+    auto core = padCore(padSet({{0, {3840, {{960, 100, 1}}}}, {4, {7680, {{0, 100, 3}}}}}));
+    core->play(0);
+    core->padLaunch(0, 0, 0);
+    core->padLaunch(0, 1, 4);
+    const auto on = findOnsets(renderAll(*core, 1, 230000, 480));
+    const std::vector<int64_t> want = {0, 24000, 120000, 192000, 216000};
+    CHECK(on.size() == want.size(), "onsets %zu", on.size());
+    for (size_t i = 0; i < on.size() && i < want.size(); ++i)
+        CHECK(std::llabs(on[i] - want[i]) <= 1, "onset %zu at %lld want %lld", i, static_cast<long long>(on[i]), static_cast<long long>(want[i]));
+}
+
+static void testPadRecordEventsAndInvalid() {
+    begin("Pad lặp: sự kiện ghi chỉ khi bật ghi; launch sai hàng bị từ chối; pad ngoài dữ liệu không lỗi");
+    auto core = padCore(padSet({{0, {3840, {{0, 100, 1}, {1920, 70, 3}}}}}));
+    CHECK(!core->padLaunch(0, 1, 0), "pad of row 0 accepted on row 1");
+    CHECK(!core->padLaunch(9, 0, 0), "bad track accepted");
+    core->setRecording(true);
+    core->play(0);
+    core->padLaunch(0, 0, 0);
+    core->padLaunch(0, 2, 8);   // pad rỗng (len 0): chạy nhưng im lặng
+    renderAll(*core, 1, 96000 + 1000, 480);
+    int32_t e[4];
+    std::vector<std::array<int32_t, 4>> evs;
+    while (core->popRecEvent(e)) evs.push_back({e[0], e[1], e[2], e[3]});
+    CHECK(evs.size() == 3, "events %zu", evs.size());
+    if (evs.size() == 3) {
+        CHECK(evs[0] == (std::array<int32_t, 4>{0, 0, 1, 100}), "ev0");
+        CHECK(evs[1] == (std::array<int32_t, 4>{1920, 0, 3, 70}), "ev1");
+        CHECK(evs[2] == (std::array<int32_t, 4>{3840, 0, 1, 100}), "ev2");
+    }
+    core->setRecording(false);
+    renderAll(*core, 1, 96000, 480);
+    CHECK(!core->popRecEvent(e), "events recorded while recording off");
+}
+
 int main() {
     testExactBeatsAt120();
     testNoDriftAtOddTempo();
@@ -820,6 +959,11 @@ int main() {
     testLooperChoke();
     testLooperLoopBitExactAndBounded();
     testLooperExtremeParams();
+    testPadLaunchQuantizedLoop();
+    testPadMidBarLaunchWaitsForBoundary();
+    testPadRowExclusiveSwitchAndStop();
+    testPadRowsIndependentAndLengths();
+    testPadRecordEventsAndInvalid();
 
     if (g_failures == 0) {
         std::printf("\nALL %d TESTS PASSED\n", g_tests);

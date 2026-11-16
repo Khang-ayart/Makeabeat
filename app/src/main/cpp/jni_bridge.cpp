@@ -81,6 +81,28 @@ JNIEXPORT void JNICALL JNI_FN(allNotesOff)(JNIEnv*, jobject) {
     if (gEngine) gEngine->core().allNotesOff();
 }
 
+// ---- Looper: pad nhịp lặp ----
+JNIEXPORT jboolean JNICALL JNI_FN(padLaunch)(JNIEnv*, jobject, jint track, jint row, jint pad) {
+    return gEngine && gEngine->core().padLaunch(track, row, pad) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL JNI_FN(setPadRecording)(JNIEnv*, jobject, jboolean on) {
+    if (gEngine) gEngine->core().setRecording(on == JNI_TRUE);
+}
+
+// out có 4 phần tử: tick, track, kitIdx, vel. Trả false nếu hết sự kiện.
+JNIEXPORT jboolean JNICALL JNI_FN(popPadEvent)(JNIEnv* env, jobject, jintArray out) {
+    if (!gEngine || !out || env->GetArrayLength(out) < 4) return JNI_FALSE;
+    int32_t e[4];
+    if (!gEngine->core().popRecEvent(e)) return JNI_FALSE;
+    env->SetIntArrayRegion(out, 0, 4, reinterpret_cast<const jint*>(e));
+    return JNI_TRUE;
+}
+
+JNIEXPORT jlong JNICALL JNI_FN(padMask)(JNIEnv*, jobject, jint track) {
+    return gEngine ? static_cast<jlong>(gEngine->core().padMask(track)) : 0;
+}
+
 // ---- Đọc trạng thái ----
 JNIEXPORT jdouble JNICALL JNI_FN(beatPosition)(JNIEnv*, jobject) {
     return gEngine ? gEngine->core().beatPosition() : 0.0;

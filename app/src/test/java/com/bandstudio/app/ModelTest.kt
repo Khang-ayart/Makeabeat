@@ -7,6 +7,7 @@ import com.bandstudio.app.model.NoteEvent
 import com.bandstudio.app.model.PAD_COUNT
 import com.bandstudio.app.model.PADS_PER_ROW
 import com.bandstudio.app.model.Patch
+import com.bandstudio.app.model.Patterns
 import com.bandstudio.app.model.Project
 import com.bandstudio.app.model.SoundCat
 import com.bandstudio.app.model.Quantizer
@@ -66,7 +67,7 @@ class ModelTest {
         val project = Project("p", "n", tracks = listOf(Track(1, "Piano", Instrument.PIANO, clips = listOf(clip))))
         val data = project.encodeForEngine(loop = false, loopStart = 0, loopEnd = 7680, length = 7680)
         // Nốt thứ hai bắt đầu ngoài độ dài clip nên bị bỏ; nốt đầu ở tick tuyệt đối 3840.
-        assertArrayEquals(intArrayOf(2, 0, 0, 7680, 7680, 1, 0, 0, 1, 3840, 480, 60, 100), data)
+        assertArrayEquals(intArrayOf(3, 0, 0, 7680, 7680, 1, 0, 0, 0, 1, 3840, 480, 60, 100), data)
     }
 
     @Test
@@ -74,7 +75,7 @@ class ModelTest {
         val clip = Clip(id = 2, startBar = 0, bars = 1, notes = listOf(NoteEvent(3600, 1000, 60)))
         val project = Project("p", "n", tracks = listOf(Track(1, "Bass", Instrument.BASS, clips = listOf(clip))))
         val data = project.encodeForEngine(loop = true, loopStart = 0, loopEnd = 3840, length = 0)
-        assertEquals(240, data[10]) // dur bị cắt từ 1000 xuống 240
+        assertEquals(240, data[11]) // dur bị cắt từ 1000 xuống 240
     }
 
     @Test
@@ -150,13 +151,34 @@ class ModelTest {
         val clip = Clip(2, 0, 1, listOf(NoteEvent(480, 240, 5, 90)))
         val t = Track(1, "Looper", Instrument.LOOPER, clips = listOf(clip), genreId = genre.id, kit = genre.kit())
         val data = Project("p", "n", tracks = listOf(t)).encodeForEngine(false, 0, 0, 3840)
-        assertEquals(2, data[0])
+        assertEquals(3, data[0])
         assertEquals(Instrument.LOOPER.id, data[6])
         assertEquals(PAD_COUNT, data[7])
-        val notesAt = 8 + PAD_COUNT * Patch.INTS
-        assertEquals(1, data[notesAt])
-        assertArrayEquals(intArrayOf(480, 240, 5, 90), data.copyOfRange(notesAt + 1, notesAt + 5))
-        assertEquals(notesAt + 5, data.size)
+        var i = 8 + PAD_COUNT * Patch.INTS
+        assertEquals(PAD_COUNT, data[i++])
+        for (pad in 0 until PAD_COUNT) { // mỗi pad: len, số hit, rồi các hit
+            assertEquals(Patterns.LEN_TICKS, data[i++])
+            val n = data[i++]
+            assertEquals(Patterns.hits(genre.family, pad).size, n)
+            i += n * 3
+        }
+        assertEquals(1, data[i])
+        assertArrayEquals(intArrayOf(480, 240, 5, 90), data.copyOfRange(i + 1, i + 5))
+        assertEquals(i + 5, data.size)
+    }
+
+    @Test
+    fun launcherModeKeepsOnlyPadPatterns() {
+        val genre = Catalog.genre("trap")!!
+        val clip = Clip(2, 0, 1, listOf(NoteEvent(0, 240, 5, 90)))
+        val looper = Track(1, "L", Instrument.LOOPER, clips = listOf(clip), genreId = genre.id, kit = genre.kit())
+        val piano = Track(2, "P", Instrument.PIANO, clips = listOf(clip))
+        val p = Project("p", "n", tracks = listOf(piano, looper))
+        val normal = p.encodeForEngine(false, 0, 0, 3840)
+        val launcher = p.encodeForEngine(false, 0, 0, 0, launcherTrackId = looper.id)
+        assertTrue(launcher.size < normal.size) // clip bị bỏ
+        // Track 0 (piano) bắt đầu ở chỉ số 6: inst, kitCount, padCount, noteCount.
+        assertEquals(0, launcher[7]); assertEquals(0, launcher[8]); assertEquals(0, launcher[9])
     }
 
     @Test
@@ -167,5 +189,32 @@ class ModelTest {
         val back = com.bandstudio.app.model.projectFromJson(org.json.JSONObject(p.toJson().toString()))
         assertEquals(genre.id, back.tracks[0].genreId)
         assertEquals(genre.kit(), back.tracks[0].kit)
+    }
+
+    @Test
+    fun everyGenreFamilyHasPlayablePatternsForAllPads() {
+        for (g in Catalog.genres) {
+            assertTrue("${g.id}: họ ${g.family}", g.family in Patterns.familyIds)
+            for (pad in 0 until PAD_COUNT) {
+                val str = Patterns.pattern(g.family, pad)
+                assertTrue("${g.family}/$pad", str != null && str.length == Patterns.STEPS)
+                val hits = Patterns.hits(g.family, pad)
+                assertTrue("${g.family}/$pad rỗng", hits.isNotEmpty())
+                val row = pad / PADS_PER_ROW
+                for (h in hits) {
+                    assertTrue(h.step in 0 until Patterns.STEPS && h.vel in 1..127)
+                    // Hàng Bass chỉ chạm 4 nốt của hàng Bass; các hàng khác chạm đúng âm của pad.
+                    if (row == SoundCat.BASS.ordinal) assertTrue(h.kitIdx in 16..19) else assertEquals(pad, h.kitIdx)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun padsInARowDifferFromEachOther() {
+        for (g in Catalog.genres) for (row in 0 until SoundCat.entries.size) {
+            val set = (0 until PADS_PER_ROW).map { Patterns.pattern(g.family, row * PADS_PER_ROW + it) }.toSet()
+            assertEquals("${g.family}/$row: 4 mẫu phải khác nhau", PADS_PER_ROW, set.size)
+        }
     }
 }

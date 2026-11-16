@@ -53,6 +53,22 @@ struct Patch {
     float gain = 1.0f, drive = 0;                  // drive>0: méo mềm (808 rè)
 };
 
+// Looper: mỗi pad là một nhịp lặp. Pad i nằm ở hàng i / 4. Nhịp gồm các cú đánh (hit) trong một chu kỳ
+// dài len tick; engine tự phát lặp khi pad được bật, vào đúng đầu chu kỳ để mọi pad luôn khớp nhau.
+constexpr int kPadRows = 5;
+constexpr int kPadsPerRow = 4;
+constexpr int kMaxPads = kPadRows * kPadsPerRow;
+constexpr int kMaxPadLen = 8 * 3840;  // tối đa 8 ô nhịp
+struct PadHit {
+    int32_t start;    // tick trong chu kỳ, [0, len)
+    uint8_t vel;
+    uint8_t kitIdx;   // phát âm nào trong kit của track
+};
+struct PadPattern {
+    int32_t len = 0;  // 0 = pad trống
+    std::vector<PadHit> hits;  // đã sắp theo start
+};
+
 struct Note {
     int32_t start;  // tick tuyệt đối trong bài
     int32_t dur;    // độ dài (tick)
@@ -63,7 +79,8 @@ struct Note {
 struct TrackData {
     Inst inst = Inst::Piano;
     std::vector<Note> notes;  // đã sắp theo start
-    std::vector<Patch> kit;   // chỉ track Looper: pitch của nốt = chỉ số pad trong kit
+    std::vector<Patch> kit;   // chỉ track Looper: pitch của nốt (và kitIdx của hit) = chỉ số trong kit
+    std::vector<PadPattern> pads;  // chỉ track Looper: nhịp của từng pad
 };
 
 // Ảnh chụp bất biến của bài nhạc. UI dựng rồi "xuất bản" sang luồng âm thanh, sau khi

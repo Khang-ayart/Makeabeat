@@ -23,7 +23,7 @@ inline float softClip(float x) noexcept {
 }  // namespace
 
 Song* decodeSong(const int32_t* d, int n) {
-    if (!d || n < 6 || d[0] != 2) return nullptr;
+    if (!d || n < 6 || d[0] != 3) return nullptr;
     auto song = std::make_unique<Song>();
     song->loop = d[1] != 0;
     song->loopStart = std::max(0, d[2]);
@@ -39,7 +39,7 @@ Song* decodeSong(const int32_t* d, int n) {
         const int inst = d[i++];
         const int kitCount = d[i++];
         if (inst < 0 || inst >= kInstCount || kitCount < 0 || kitCount > kMaxKit ||
-            static_cast<int64_t>(i) + static_cast<int64_t>(kPatchInts) * kitCount + 1 > n) {
+            static_cast<int64_t>(i) + static_cast<int64_t>(kPatchInts) * kitCount + 2 > n) {
             return nullptr;
         }
         TrackData& td = song->tracks[t];
@@ -65,6 +65,24 @@ Song* decodeSong(const int32_t* d, int n) {
             p.gain = f(d[i + 15]);
             p.drive = f(d[i + 16]);
             td.kit.push_back(p);
+        }
+        const int padCount = d[i++];
+        if (padCount < 0 || padCount > kMaxPads) return nullptr;
+        td.pads.resize(static_cast<size_t>(padCount));
+        for (int k = 0; k < padCount; ++k) {
+            if (i + 2 > n) return nullptr;
+            const int len = d[i++];
+            const int hits = d[i++];
+            if (len < 0 || hits < 0 || static_cast<int64_t>(i) + 3LL * hits + 1 > n) return nullptr;
+            PadPattern& pp = td.pads[static_cast<size_t>(k)];
+            pp.len = std::clamp(len, 0, kMaxPadLen);
+            pp.hits.reserve(static_cast<size_t>(hits));
+            for (int h = 0; h < hits; ++h, i += 3) {
+                if (d[i] < 0 || d[i] >= pp.len || d[i + 2] < 0 || d[i + 2] >= kitCount) continue;  // hit lạc: bỏ
+                pp.hits.push_back({d[i], static_cast<uint8_t>(std::clamp(d[i + 1], 1, 127)), static_cast<uint8_t>(d[i + 2])});
+            }
+            std::stable_sort(pp.hits.begin(), pp.hits.end(),
+                             [](const PadHit& a, const PadHit& b) { return a.start < b.start; });
         }
         const int count = d[i++];
         if (count < 0 || static_cast<int64_t>(i) + 4LL * count > n) return nullptr;
@@ -108,6 +126,7 @@ void EngineCore::prepare(int sampleRate, int channelCount) {
     releaseCoef_ = static_cast<float>(std::exp(-1.0 / (0.12 * sampleRate_)));
     chokeCoef_ = static_cast<float>(std::exp(-1.0 / (0.012 * sampleRate_)));
     for (auto& v : voices_) v.active = false;
+    clearPads();
     click_ = Click{};
     gainsInit_ = false;
 }
@@ -167,6 +186,27 @@ bool EngineCore::noteOff(int track, int note) noexcept {
     return commands_.push(c);
 }
 
+bool EngineCore::padLaunch(int track, int row, int pad) noexcept {
+    if (track < 0 || track >= kMaxTracks || row < 0 || row >= kPadRows) return false;
+    if (pad >= 0 && pad / kPadsPerRow != row) return false;  // pad phải thuộc đúng hàng
+    Command c;
+    c.type = Command::Type::PadLaunch;
+    c.a = row;
+    c.b = track;
+    c.c = pad < 0 ? -1 : pad;
+    return commands_.push(c);
+}
+
+bool EngineCore::popRecEvent(int32_t out[4]) noexcept {
+    RecEvent e;
+    if (!recEvents_.pop(e)) return false;
+    out[0] = e.tick;
+    out[1] = e.track;
+    out[2] = e.kitIdx;
+    out[3] = e.vel;
+    return true;
+}
+
 bool EngineCore::allNotesOff() noexcept {
     Command c;
     c.type = Command::Type::AllNotesOff;
@@ -192,6 +232,17 @@ void EngineCore::apply(const Command& cmd) noexcept {
         case Command::Type::Stop:
             playing_ = false;
             releaseSequenced(true);
+            clearPads();
+            break;
+
+        case Command::Type::PadLaunch:
+            if (cmd.b >= 0 && cmd.b < kMaxTracks && cmd.a >= 0 && cmd.a < kPadRows) {
+                PadRow& r = padRows_[cmd.b][cmd.a];
+                if (cmd.c == r.active && r.queued == kNoQueue) {
+                    break;  // đã chạy đúng pad đó, không có gì đổi
+                }
+                r.queued = cmd.c;  // >= 0 bật, -1 tắt (ở đầu chu kỳ kế tiếp)
+            }
             break;
 
         case Command::Type::NoteOn:
@@ -212,6 +263,46 @@ void EngineCore::apply(const Command& cmd) noexcept {
         case Command::Type::AllNotesOff:
             for (auto& v : voices_) v.beginRelease(v.kind == Voice::Kind::Drum ? chokeCoef_ : releaseCoef_);
             break;
+    }
+}
+
+void EngineCore::clearPads() noexcept {
+    for (auto& t : padRows_)
+        for (auto& r : t) r = PadRow{};
+}
+
+// Áp dụng pad đang chờ ở đầu chu kỳ rồi phát các cú đánh của pad đang chạy tại tick này.
+void EngineCore::runPads(int track, int64_t tick) noexcept {
+    const TrackData& td = current_->tracks[track];
+    if (td.inst != Inst::Looper || td.pads.empty()) return;
+    const int padN = static_cast<int>(td.pads.size());
+    for (int row = 0; row < kPadRows; ++row) {
+        PadRow& r = padRows_[track][row];
+        if (r.queued != kNoQueue) {
+            const int ref = r.queued >= 0 ? r.queued : r.active;  // độ dài chu kỳ quyết định thời điểm đổi
+            const int64_t len = (ref >= 0 && ref < padN) ? td.pads[static_cast<size_t>(ref)].len : 0;
+            if (len <= 0 || tick % len == 0) {
+                r.active = r.queued;
+                r.queued = kNoQueue;
+            }
+        }
+        if (r.active < 0 || r.active >= padN) continue;
+        const PadPattern& pp = td.pads[static_cast<size_t>(r.active)];
+        if (pp.len <= 0 || pp.hits.empty()) continue;
+        const int32_t phase = static_cast<int32_t>(tick % pp.len);
+        auto it = std::lower_bound(pp.hits.begin(), pp.hits.end(), phase,
+                                   [](const PadHit& h, int32_t x) { return h.start < x; });
+        for (; it != pp.hits.end() && it->start == phase; ++it) {
+            if (recording_.load(std::memory_order_relaxed)) {
+                recEvents_.push(RecEvent{static_cast<int32_t>(tick), track, it->kitIdx, it->vel});
+            }
+            if (audible_[track]) {
+                // Hạt giống theo (vị trí trong chu kỳ, pad, track, âm): mỗi vòng lặp giống hệt từng bit.
+                const uint64_t seed = static_cast<uint64_t>(phase) * 2654435761ULL + static_cast<uint64_t>(r.active) * 7919ULL +
+                                      static_cast<uint64_t>(track) * 40503ULL + static_cast<uint64_t>(it->kitIdx) * 9973ULL + 1ULL;
+                startVoice(Inst::Looper, track, it->kitIdx, it->vel, -1, true, seed);
+            }
+        }
     }
 }
 
@@ -330,7 +421,14 @@ void EngineCore::advanceTransport(bool metronome) noexcept {
     }
 
     if (tickNow != lastTick_) {
+        const int64_t prevTick = lastTick_;
         lastTick_ = tickNow;
+        // Nhịp pad: đi qua từng tick (thường chỉ một) để không bỏ sót cú đánh khi tempo rất cao.
+        const int64_t firstTick = std::max(prevTick + 1, tickNow - 64);
+        for (int t = 0; t < kMaxTracks; ++t) {
+            if (s.tracks[t].inst != Inst::Looper) continue;
+            for (int64_t k = firstTick; k <= tickNow; ++k) runPads(t, k);
+        }
         for (int t = 0; t < kMaxTracks; ++t) {
             const auto& notes = s.tracks[t].notes;
             int& idx = nextIdx_[t];
@@ -433,6 +531,16 @@ void EngineCore::render(float* out, int numFrames) noexcept {
         }
     }
 
+    for (int t = 0; t < kMaxTracks; ++t) {
+        int64_t m = 0;
+        for (int row = 0; row < kPadRows; ++row) {
+            const PadRow& r = padRows_[t][row];
+            if (r.active >= 0 && r.active < 20) m |= int64_t{1} << r.active;
+            if (r.queued >= 0 && r.queued < 20) m |= int64_t{1} << (20 + r.queued);
+            if (r.queued == -1 && r.active >= 0 && r.active < 20) m |= int64_t{1} << (40 + r.active);
+        }
+        padMask_[t].store(m, std::memory_order_relaxed);
+    }
     const double pos = playing_ ? baseBeat_ + static_cast<double>(framesSinceBase_) * beatsPerFrame_ : 0.0;
     beatPosPublished_.store(pos, std::memory_order_relaxed);
     playingPublished_.store(playing_, std::memory_order_relaxed);
