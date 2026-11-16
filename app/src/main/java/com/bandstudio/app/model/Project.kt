@@ -7,6 +7,7 @@ const val STEP_TICKS = PPQ / 4            // 1/16 = 240
 const val MAX_TRACKS = 8
 const val MAX_BARS = 64
 const val MAX_CLIP_BARS = 8
+const val MAX_KIT = 32  // khớp kMaxKit
 
 /** Dải nốt hiển thị trong Piano Roll: C1..B6. */
 const val ROLL_LOW = 24
@@ -25,7 +26,13 @@ enum class Instrument(
     ELECTRIC(2, "Electric Guitar", false, 0xFFE5534B, 55, 48),
     BASS(3, "Bass", false, 0xFF9B6BFF, 40, 36),
     DRUM_KIT(4, "Drum Kit", true, 0xFF2FBF8F, 0, 0),
-    DRUM_PAD(5, "Drum Pad", true, 0xFF1FB5D4, 0, 0);
+    DRUM_PAD(5, "Drum Pad", true, 0xFF1FB5D4, 0, 0),
+    LOOPER(6, "Looper", false, 0xFFE0568F, 0, 0);
+
+    val isLooper: Boolean get() = this == LOOPER
+
+    /** Nhạc cụ bấm là phát một tiếng ngắn (trống, pad Looper): lưới 1/16, không có nốt kéo dài. */
+    val oneShot: Boolean get() = isDrum || isLooper
 
     companion object {
         fun fromId(id: Int): Instrument = entries.firstOrNull { it.id == id } ?: PIANO
@@ -63,6 +70,9 @@ data class Track(
     val mute: Boolean = false,
     val solo: Boolean = false,
     val clips: List<Clip> = emptyList(),
+    /** Chỉ track Looper: thể loại đang chọn và 20 pad (4 lựa chọn x 5 hàng). Pitch của nốt = chỉ số pad. */
+    val genreId: String = "",
+    val kit: List<PadSpec> = emptyList(),
 ) {
     /** Còn trống [startBar, startBar+bars) không (bỏ qua clip [ignoreId])? */
     fun isFree(startBar: Int, bars: Int, ignoreId: Int = -1): Boolean =
@@ -87,13 +97,14 @@ data class Project(
 
 /**
  * Đóng gói bài nhạc thành mảng int cho engine C++ (xem decodeSong trong engine_core.h):
- * [1, loop, loopStart, loopEnd, length, trackCount, rồi mỗi track: inst, noteCount, noteCount * (start, dur, pitch, vel)]
+ * [2, loop, loopStart, loopEnd, length, trackCount, rồi mỗi track: inst, kitCount, kitCount * 17 số của Patch,
+ * noteCount, noteCount * (start, dur, pitch, vel)]. kit chỉ có ở track Looper (các track khác kitCount = 0).
  * Nốt của mọi clip được trải ra tick tuyệt đối trong bài; nốt vượt quá độ dài clip bị bỏ / cắt.
  */
 fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length: Int): IntArray {
     val used = tracks.take(MAX_TRACKS)
     val out = ArrayList<Int>()
-    out.add(1)
+    out.add(2)
     out.add(if (loop) 1 else 0)
     out.add(loopStart)
     out.add(loopEnd)
@@ -115,6 +126,9 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
             }
         }
         out.add(t.instrument.id)
+        val kit = if (t.instrument.isLooper) t.kit.take(MAX_KIT) else emptyList()
+        out.add(kit.size)
+        for (pad in kit) Catalog.patchFor(pad).encodeTo(out)
         out.add(count)
         out.addAll(flat)
     }

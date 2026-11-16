@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.bandstudio.app.audio.AudioEngine
 import com.bandstudio.app.model.BAR_TICKS
 import com.bandstudio.app.model.Clip
+import com.bandstudio.app.model.Genre
 import com.bandstudio.app.model.Instrument
 import com.bandstudio.app.model.MAX_BARS
 import com.bandstudio.app.model.MAX_CLIP_BARS
@@ -270,6 +271,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     private fun applyProject(p: Project) {
         project = p
         saveChannel.trySend(p)
+        AudioEngine.setBpm(p.bpm.toFloat())  // BPM có thể đổi do thêm Looper đầu tiên hoặc hoàn tác
         syncMix()
         publishSong()
     }
@@ -331,11 +333,27 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Track ----
 
-    fun addTrack(inst: Instrument) = commit { p ->
+    /** [genre] chỉ dùng cho Looper: quyết định 20 pad (5 hàng x 4 lựa chọn). Track đầu tiên của bài sẽ lấy BPM gợi ý của thể loại. */
+    fun addTrack(inst: Instrument, genre: Genre? = null) = commit { p ->
         if (p.tracks.size >= MAX_TRACKS) return@commit p
         val same = p.tracks.count { it.instrument == inst }
-        val name = if (same == 0) inst.label else "${inst.label} ${same + 1}"
-        p.copy(tracks = p.tracks + Track(p.nextId, name, inst), nextId = p.nextId + 1)
+        val base = if (inst.isLooper && genre != null) "Looper · ${genre.label}" else inst.label
+        val name = if (same == 0) base else "$base ${same + 1}"
+        val track = if (inst.isLooper && genre != null) {
+            Track(p.nextId, name, inst, genreId = genre.id, kit = genre.kit())
+        } else {
+            Track(p.nextId, name, inst)
+        }
+        val bpm = if (p.tracks.isEmpty() && inst.isLooper && genre != null) genre.bpm else p.bpm
+        p.copy(tracks = p.tracks + track, nextId = p.nextId + 1, bpm = bpm)
+    }
+
+    /** Đổi thể loại của track Looper: nốt giữ nguyên (theo số pad), âm của từng pad đổi theo thể loại mới. */
+    fun setLooperGenre(trackId: Int, genre: Genre) = commit { p ->
+        mapTrack(p, trackId) { t ->
+            if (!t.instrument.isLooper) t
+            else t.copy(genreId = genre.id, kit = genre.kit(), name = "Looper · ${genre.label}")
+        }
     }
 
     fun deleteTrack(id: Int) {
@@ -429,7 +447,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     /** Căn toàn bộ nốt của clip vào lưới đang chọn (1/4, 1/8, 1/16, 1/32). */
     fun quantizeEditorClip() {
         val s = screen as? Screen.Editor ?: return
-        val drum = editorTrack()?.instrument?.isDrum == true
+        val drum = editorTrack()?.instrument?.oneShot == true
         val step = if (drum) STEP_TICKS else gridStep
         commit { p ->
             mapClip(p, s.trackId, s.clipId) { c -> c.copy(notes = Quantizer.quantizeNotes(c.notes, step, c.lengthTicks)) }
@@ -481,7 +499,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         if (recording && playing) {
             val clip = editorClip() ?: return
             val tick = heardTickInClip(clip)
-            if (t.instrument.isDrum) addRecordedNote(pitch, tick, STEP_TICKS, true) else held[pitch] = tick
+            if (t.instrument.oneShot) addRecordedNote(pitch, tick, STEP_TICKS, true) else held[pitch] = tick
         }
     }
 

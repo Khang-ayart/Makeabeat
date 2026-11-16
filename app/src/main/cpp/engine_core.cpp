@@ -23,7 +23,7 @@ inline float softClip(float x) noexcept {
 }  // namespace
 
 Song* decodeSong(const int32_t* d, int n) {
-    if (!d || n < 6 || d[0] != 1) return nullptr;
+    if (!d || n < 6 || d[0] != 2) return nullptr;
     auto song = std::make_unique<Song>();
     song->loop = d[1] != 0;
     song->loopStart = std::max(0, d[2]);
@@ -32,16 +32,42 @@ Song* decodeSong(const int32_t* d, int n) {
     const int tracks = d[5];
     if (tracks < 0 || tracks > kMaxTracks) return nullptr;
 
+    auto f = [](int32_t v) { return static_cast<float>(v) * 0.001f; };
     int i = 6;
     for (int t = 0; t < tracks; ++t) {
-        if (i + 2 > n) return nullptr;
+        if (i + 3 > n) return nullptr;
         const int inst = d[i++];
-        const int count = d[i++];
-        if (inst < 0 || inst >= kInstCount || count < 0 || static_cast<int64_t>(i) + 4LL * count > n) {
+        const int kitCount = d[i++];
+        if (inst < 0 || inst >= kInstCount || kitCount < 0 || kitCount > kMaxKit ||
+            static_cast<int64_t>(i) + static_cast<int64_t>(kPatchInts) * kitCount + 1 > n) {
             return nullptr;
         }
         TrackData& td = song->tracks[t];
         td.inst = static_cast<Inst>(inst);
+        td.kit.reserve(static_cast<size_t>(kitCount));
+        for (int k = 0; k < kitCount; ++k, i += kPatchInts) {
+            Patch p;
+            p.toneAmp = f(d[i]);
+            p.fStart = f(d[i + 1]);
+            p.fEnd = f(d[i + 2]);
+            p.pitchTauMs = f(d[i + 3]);
+            p.toneTauMs = f(d[i + 4]);
+            p.noiseAmp = f(d[i + 5]);
+            p.noiseTauMs = f(d[i + 6]);
+            p.noiseHP = f(d[i + 7]);
+            p.noiseLP = f(d[i + 8]);
+            p.bursts = d[i + 9];
+            p.burstGapMs = f(d[i + 10]);
+            p.tailTauMs = f(d[i + 11]);
+            p.tone2Ratio = f(d[i + 12]);
+            p.tone2Amp = f(d[i + 13]);
+            p.chokeGroup = d[i + 14];
+            p.gain = f(d[i + 15]);
+            p.drive = f(d[i + 16]);
+            td.kit.push_back(p);
+        }
+        const int count = d[i++];
+        if (count < 0 || static_cast<int64_t>(i) + 4LL * count > n) return nullptr;
         td.notes.reserve(static_cast<size_t>(count));
         for (int k = 0; k < count; ++k, i += 4) {
             Note nt;
@@ -233,6 +259,26 @@ Voice* EngineCore::allocateVoice() noexcept {
 void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_t endTick, bool seq,
                             uint64_t seed) noexcept {
     track = std::clamp(track, 0, kMaxTracks - 1);
+    if (inst == Inst::Looper) {  // pad: âm lấy từ kit của track trong bài nhạc hiện tại
+        const auto& kit = current_->tracks[track].kit;
+        if (note < 0 || note >= static_cast<int>(kit.size())) return;  // pad chưa có âm: im lặng, không lỗi
+        const Patch& p = kit[static_cast<size_t>(note)];
+        if (p.chokeGroup > 0) {
+            for (auto& v : voices_) {
+                if (v.active && !v.releasing && v.kind == Voice::Kind::Drum && v.variant == 2 &&
+                    v.track == track && v.chokeGroup == p.chokeGroup) {
+                    v.beginRelease(chokeCoef_);
+                }
+            }
+        }
+        Voice* v = allocateVoice();
+        if (!v) return;
+        v->startPatch(p, note, velocity, sampleRate_, ++voiceCounter_, seed);
+        v->track = static_cast<uint8_t>(track);
+        v->seq = seq;
+        v->endTick = endTick;
+        return;
+    }
     if (isDrum(inst) && note == kHatClosed) {  // hi-hat đóng chặn hi-hat mở
         for (auto& v : voices_) {
             if (v.active && !v.releasing && v.kind == Voice::Kind::Drum && v.track == track && v.piece == kHatOpen) {

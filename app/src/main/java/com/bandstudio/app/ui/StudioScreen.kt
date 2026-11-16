@@ -54,12 +54,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.bandstudio.app.StudioViewModel
 import com.bandstudio.app.model.BAR_TICKS
+import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.Clip
 import com.bandstudio.app.model.DRUM_NAMES
+import com.bandstudio.app.model.Genre
 import com.bandstudio.app.model.Instrument
 import com.bandstudio.app.model.MAX_BARS
 import com.bandstudio.app.model.MAX_CLIP_BARS
 import com.bandstudio.app.model.MAX_TRACKS
+import com.bandstudio.app.model.PAD_COUNT
 import com.bandstudio.app.model.Project
 import com.bandstudio.app.model.Track
 import kotlin.math.roundToInt
@@ -74,6 +77,7 @@ private val RulerH = 30.dp
 fun StudioScreen(vm: StudioViewModel) {
     val project = vm.project ?: return
     var showPicker by remember { mutableStateOf(false) }
+    var showGenrePicker by remember { mutableStateOf(false) }
     var trackDialogId by remember { mutableStateOf<Int?>(null) }
     var showRename by remember { mutableStateOf(false) }
 
@@ -96,7 +100,21 @@ fun StudioScreen(vm: StudioViewModel) {
     }
 
     if (showPicker) {
-        InstrumentPicker(onPick = { vm.addTrack(it); showPicker = false }, onDismiss = { showPicker = false })
+        InstrumentPicker(
+            onPick = {
+                showPicker = false
+                if (it.isLooper) showGenrePicker = true else vm.addTrack(it)
+            },
+            onDismiss = { showPicker = false },
+        )
+    }
+    if (showGenrePicker) {
+        GenrePicker(
+            title = "Chọn thể loại cho Looper",
+            current = null,
+            onPick = { vm.addTrack(Instrument.LOOPER, it); showGenrePicker = false },
+            onDismiss = { showGenrePicker = false },
+        )
     }
     trackDialogId?.let { id ->
         val t = project.track(id)
@@ -300,9 +318,9 @@ private fun MiniNotes(clip: Clip, inst: Instrument, color: Color) {
         val len = clip.lengthTicks.toFloat()
         val lo: Int
         val hi: Int
-        if (inst.isDrum) {
+        if (inst.oneShot) {
             lo = 0
-            hi = DRUM_NAMES.size - 1
+            hi = (if (inst.isLooper) PAD_COUNT else DRUM_NAMES.size) - 1
         } else {
             lo = clip.notes.minOf { it.pitch }
             hi = maxOf(clip.notes.maxOf { it.pitch }, lo + 7)
@@ -435,6 +453,7 @@ private fun InstrumentCard(inst: Instrument, modifier: Modifier, onClick: () -> 
         Instrument.BASS -> "Trầm, giữ nhịp"
         Instrument.DRUM_KIT -> "Trống mộc"
         Instrument.DRUM_PAD -> "Trống điện tử 808"
+        Instrument.LOOPER -> "Pad theo thể loại"
     }
     Column(
         modifier
@@ -450,8 +469,53 @@ private fun InstrumentCard(inst: Instrument, modifier: Modifier, onClick: () -> 
     }
 }
 
+/** Danh sách thể loại; mỗi thể loại sẽ có kick / snare / hi-hat / percussion / bass riêng, mỗi hàng 4 lựa chọn. */
+@Composable
+private fun GenrePicker(title: String, current: String?, onPick: (Genre) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (pair in Catalog.genres.chunked(2)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (g in pair) {
+                            val selected = g.id == current
+                            Column(
+                                Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .border(if (selected) 2.dp else 0.dp, if (selected) Color.White else Color.Transparent, RoundedCornerShape(12.dp))
+                                    .clickable { onPick(g) }
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(g.label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${g.bpm} BPM", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Đóng") } },
+    )
+}
+
 @Composable
 private fun TrackDialog(vm: StudioViewModel, t: Track, onClose: () -> Unit) {
+    var showGenres by remember { mutableStateOf(false) }
+    if (showGenres) {
+        GenrePicker(
+            title = "Đổi thể loại",
+            current = t.genreId,
+            onPick = { vm.setLooperGenre(t.id, it); showGenres = false },
+            onDismiss = { showGenres = false },
+        )
+    }
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text(t.name) },
@@ -461,6 +525,11 @@ private fun TrackDialog(vm: StudioViewModel, t: Track, onClose: () -> Unit) {
                 Slider(value = t.volume, onValueChange = { vm.setTrackVolume(t.id, it) }, valueRange = 0f..1.2f)
                 Text("Trái  –  Phải", style = MaterialTheme.typography.labelLarge)
                 Slider(value = t.pan, onValueChange = { vm.setTrackPan(t.id, it) }, valueRange = -1f..1f)
+                if (t.instrument.isLooper) {
+                    OutlinedButton(onClick = { showGenres = true }) {
+                        Text("Thể loại: ${Catalog.genre(t.genreId)?.label ?: "—"}  ›")
+                    }
+                }
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text("Xong") } },

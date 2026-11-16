@@ -20,6 +20,10 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
             put("pan", t.pan.toDouble())
             put("mute", t.mute)
             put("solo", t.solo)
+            if (t.instrument.isLooper) {
+                put("genre", t.genreId)
+                put("kit", JSONArray().also { ka -> for (pad in t.kit) ka.put(JSONArray().put(pad.soundId).put(pad.semitones)) })
+            }
             put("clips", JSONArray().also { cs ->
                 for (c in t.clips) cs.put(JSONObject().apply {
                     put("id", c.id)
@@ -51,6 +55,12 @@ fun projectFromJson(o: JSONObject): Project {
             }
             clips.add(Clip(c.getInt("id"), c.getInt("startBar"), c.getInt("bars").coerceIn(1, MAX_CLIP_BARS), notes))
         }
+        val kit = ArrayList<PadSpec>()
+        val ka = t.optJSONArray("kit") ?: JSONArray()
+        for (j in 0 until minOf(ka.length(), MAX_KIT)) {
+            val e = ka.optJSONArray(j) ?: continue
+            kit.add(PadSpec(e.optString(0, ""), e.optInt(1, 0)))
+        }
         tracks.add(
             Track(
                 id = t.getInt("id"),
@@ -61,6 +71,8 @@ fun projectFromJson(o: JSONObject): Project {
                 mute = t.optBoolean("mute", false),
                 solo = t.optBoolean("solo", false),
                 clips = clips,
+                genreId = t.optString("genre", ""),
+                kit = kit,
             ),
         )
     }

@@ -1,12 +1,18 @@
 package com.bandstudio.app
 
+import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.Clip
 import com.bandstudio.app.model.Instrument
 import com.bandstudio.app.model.NoteEvent
+import com.bandstudio.app.model.PAD_COUNT
+import com.bandstudio.app.model.PADS_PER_ROW
+import com.bandstudio.app.model.Patch
 import com.bandstudio.app.model.Project
+import com.bandstudio.app.model.SoundCat
 import com.bandstudio.app.model.Quantizer
 import com.bandstudio.app.model.Track
 import com.bandstudio.app.model.encodeForEngine
+import com.bandstudio.app.model.toJson
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -60,7 +66,7 @@ class ModelTest {
         val project = Project("p", "n", tracks = listOf(Track(1, "Piano", Instrument.PIANO, clips = listOf(clip))))
         val data = project.encodeForEngine(loop = false, loopStart = 0, loopEnd = 7680, length = 7680)
         // Nốt thứ hai bắt đầu ngoài độ dài clip nên bị bỏ; nốt đầu ở tick tuyệt đối 3840.
-        assertArrayEquals(intArrayOf(1, 0, 0, 7680, 7680, 1, 0, 1, 3840, 480, 60, 100), data)
+        assertArrayEquals(intArrayOf(2, 0, 0, 7680, 7680, 1, 0, 0, 1, 3840, 480, 60, 100), data)
     }
 
     @Test
@@ -68,7 +74,7 @@ class ModelTest {
         val clip = Clip(id = 2, startBar = 0, bars = 1, notes = listOf(NoteEvent(3600, 1000, 60)))
         val project = Project("p", "n", tracks = listOf(Track(1, "Bass", Instrument.BASS, clips = listOf(clip))))
         val data = project.encodeForEngine(loop = true, loopStart = 0, loopEnd = 3840, length = 0)
-        assertEquals(240, data[9]) // dur bị cắt từ 1000 xuống 240
+        assertEquals(240, data[10]) // dur bị cắt từ 1000 xuống 240
     }
 
     @Test
@@ -79,5 +85,87 @@ class ModelTest {
         assertTrue(t.isFree(4, 1))
         assertTrue(t.isFree(2, 2, ignoreId = 7)) // chính clip đó thì được bỏ qua
         assertFalse(t.isFree(63, 2))
+    }
+
+    // ---- Looper: danh mục âm và thể loại ----------------------------------------------
+
+    @Test
+    fun everyGenreOffersFourDistinctMatchingSoundsPerRow() {
+        assertTrue(Catalog.genres.size >= 10)
+        assertEquals(Catalog.genres.size, Catalog.genres.map { it.id }.toSet().size)
+        for (g in Catalog.genres) {
+            val kit = g.kit()
+            assertEquals("${g.id}: số pad", PAD_COUNT, kit.size)
+            SoundCat.entries.forEachIndexed { row, cat ->
+                val rowPads = kit.subList(row * PADS_PER_ROW, (row + 1) * PADS_PER_ROW)
+                for (pad in rowPads) {
+                    val snd = Catalog.sound(pad.soundId)
+                    assertTrue("${g.id}: thiếu âm ${pad.soundId}", snd != null)
+                    assertEquals("${g.id}: sai hàng ${pad.soundId}", cat, snd!!.cat)
+                }
+                // Bốn lựa chọn phải khác nhau (hàng Bass cùng âm nhưng khác cao độ).
+                assertEquals("${g.id}/${cat.label}: trùng lựa chọn", PADS_PER_ROW, rowPads.toSet().size)
+            }
+        }
+    }
+
+    @Test
+    fun catalogParametersAreWithinEngineRanges() {
+        assertEquals(Catalog.sounds.size, Catalog.sounds.map { it.id }.toSet().size)
+        for (s in Catalog.sounds) {
+            val p = s.patch
+            val tag = s.id
+            assertTrue("$tag: không có âm nào", p.toneAmp > 0f || p.noiseAmp > 0f)
+            assertTrue("$tag amp", p.toneAmp in 0f..2f && p.noiseAmp in 0f..2f && p.tone2Amp in 0f..2f)
+            assertTrue("$tag freq", p.fStart in 20f..20000f && p.fEnd in 20f..20000f)
+            assertTrue("$tag tau", p.pitchTauMs > 0f && p.toneTauMs > 0f && p.noiseTauMs > 0f && p.tailTauMs > 0f)
+            assertTrue("$tag filter", p.noiseHP in 0f..1f && p.noiseLP in 0f..1f)
+            assertTrue("$tag drive/gain", p.drive in 0f..12f && p.gain in 0f..2f)
+            assertTrue("$tag bursts", p.bursts in 0..8)
+        }
+        for (s in Catalog.sounds.filter { it.cat == SoundCat.BASS }) {
+            assertTrue("${s.id}: bass phải có tone", s.patch.toneAmp > 0f)
+        }
+    }
+
+    @Test
+    fun everySoundIsUsedByAtLeastOneGenre() {
+        val used = Catalog.genres.flatMap { it.kit() }.map { it.soundId }.toSet()
+        val unused = Catalog.sounds.map { it.id }.filter { it !in used }
+        assertTrue("âm không thể loại nào dùng: $unused", unused.isEmpty())
+    }
+
+    @Test
+    fun bassPadsTransposeByEqualTemperament() {
+        val root = Catalog.patchFor(com.bandstudio.app.model.PadSpec("bass.sub", 0))
+        val octave = Catalog.patchFor(com.bandstudio.app.model.PadSpec("bass.sub", 12))
+        assertEquals(root.fEnd * 2f, octave.fEnd, 1e-3f)
+        assertEquals("E1", com.bandstudio.app.model.noteName(Catalog.BASS_E1_MIDI))
+        assertEquals(Patch.SILENT, Catalog.patchFor(com.bandstudio.app.model.PadSpec("không-tồn-tại")))
+    }
+
+    @Test
+    fun looperTrackEncodesKitThenNotes() {
+        val genre = Catalog.genres.first()
+        val clip = Clip(2, 0, 1, listOf(NoteEvent(480, 240, 5, 90)))
+        val t = Track(1, "Looper", Instrument.LOOPER, clips = listOf(clip), genreId = genre.id, kit = genre.kit())
+        val data = Project("p", "n", tracks = listOf(t)).encodeForEngine(false, 0, 0, 3840)
+        assertEquals(2, data[0])
+        assertEquals(Instrument.LOOPER.id, data[6])
+        assertEquals(PAD_COUNT, data[7])
+        val notesAt = 8 + PAD_COUNT * Patch.INTS
+        assertEquals(1, data[notesAt])
+        assertArrayEquals(intArrayOf(480, 240, 5, 90), data.copyOfRange(notesAt + 1, notesAt + 5))
+        assertEquals(notesAt + 5, data.size)
+    }
+
+    @Test
+    fun looperKitSurvivesJsonRoundTrip() {
+        val genre = Catalog.genre("trap")!!
+        val t = Track(1, "Looper", Instrument.LOOPER, genreId = genre.id, kit = genre.kit())
+        val p = Project("p", "n", tracks = listOf(t))
+        val back = com.bandstudio.app.model.projectFromJson(org.json.JSONObject(p.toJson().toString()))
+        assertEquals(genre.id, back.tracks[0].genreId)
+        assertEquals(genre.kit(), back.tracks[0].kit)
     }
 }

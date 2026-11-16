@@ -3,6 +3,7 @@
 //   g++ -std=c++17 -O2 -Iapp/src/main/cpp native-tests/core_test.cpp app/src/main/cpp/engine_core.cpp app/src/main/cpp/noise_reducer.cpp -o core_test && ./core_test
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -40,14 +41,23 @@ static void begin(const char* name) {
 struct N {
     int start, dur, pitch, vel;
 };
-using TrackSpec = std::pair<Inst, std::vector<N>>;
+using Kit = std::vector<std::array<int32_t, kPatchInts>>;
+struct TrackSpec {
+    Inst inst;
+    std::vector<N> notes;
+    Kit kit;
+    TrackSpec(Inst i, std::vector<N> n, Kit k = {}) : inst(i), notes(std::move(n)), kit(std::move(k)) {}
+};
 
+// Định dạng v2: [2, loop, ls, le, len, trackCount, mỗi track: inst, kitCount, kit..., noteCount, notes...]
 static std::vector<int32_t> encode(bool loop, int ls, int le, int len, const std::vector<TrackSpec>& tracks) {
-    std::vector<int32_t> d = {1, loop ? 1 : 0, ls, le, len, static_cast<int32_t>(tracks.size())};
+    std::vector<int32_t> d = {2, loop ? 1 : 0, ls, le, len, static_cast<int32_t>(tracks.size())};
     for (const auto& t : tracks) {
-        d.push_back(static_cast<int32_t>(t.first));
-        d.push_back(static_cast<int32_t>(t.second.size()));
-        for (const N& n : t.second) {
+        d.push_back(static_cast<int32_t>(t.inst));
+        d.push_back(static_cast<int32_t>(t.kit.size()));
+        for (const auto& p : t.kit) d.insert(d.end(), p.begin(), p.end());
+        d.push_back(static_cast<int32_t>(t.notes.size()));
+        for (const N& n : t.notes) {
             d.push_back(n.start);
             d.push_back(n.dur);
             d.push_back(n.pitch);
@@ -439,15 +449,19 @@ static void testQueueOverflowAndDecode() {
     renderAll(core, 1, 480, 480);
     CHECK(core.noteOn(0, 0, 60, 100), "queue should accept commands after draining");
 
-    const std::vector<int32_t> bad1 = {2, 0, 0, 0, 0, 0};                    // sai phiên bản
-    const std::vector<int32_t> bad2 = {1, 0, 0, 0, 0, 1, 0, 5, 0, 1, 60, 1};  // khai 5 nốt nhưng chỉ có 1
-    const std::vector<int32_t> bad3 = {1, 0, 0, 0, 0, 9};                    // quá nhiều track
-    const std::vector<int32_t> bad4 = {1, 0, 0, 0, 0, 1, 99, 0};              // nhạc cụ không tồn tại
+    const std::vector<int32_t> bad1 = {1, 0, 0, 0, 0, 0};                    // sai phiên bản (v1 cũ)
+    const std::vector<int32_t> bad2 = {2, 0, 0, 0, 0, 1, 0, 0, 5, 0, 1, 60, 1};  // khai 5 nốt nhưng chỉ có 1
+    const std::vector<int32_t> bad3 = {2, 0, 0, 0, 0, 9};                    // quá nhiều track
+    const std::vector<int32_t> bad4 = {2, 0, 0, 0, 0, 1, 99, 0, 0};              // nhạc cụ không tồn tại
     CHECK(decodeSong(bad1.data(), static_cast<int>(bad1.size())) == nullptr, "bad version accepted");
     CHECK(decodeSong(bad2.data(), static_cast<int>(bad2.size())) == nullptr, "truncated accepted");
     CHECK(decodeSong(bad3.data(), static_cast<int>(bad3.size())) == nullptr, "too many tracks accepted");
     CHECK(decodeSong(bad4.data(), static_cast<int>(bad4.size())) == nullptr, "bad instrument accepted");
     CHECK(decodeSong(nullptr, 0) == nullptr, "null accepted");
+    std::vector<int32_t> bad5 = {2, 0, 0, 0, 0, 1, 6, 33, 0};  // kit quá lớn
+    std::vector<int32_t> bad6 = {2, 0, 0, 0, 0, 1, 6, 2, 0};   // khai 2 patch nhưng thiếu dữ liệu
+    CHECK(decodeSong(bad5.data(), static_cast<int>(bad5.size())) == nullptr, "oversized kit accepted");
+    CHECK(decodeSong(bad6.data(), static_cast<int>(bad6.size())) == nullptr, "truncated kit accepted");
 
     const auto ok = encode(false, 0, 0, 0, {{Inst::Piano, {{480, 10, 64, 100}, {0, 10, 60, 100}}}});
     Song* s = decodeSong(ok.data(), static_cast<int>(ok.size()));
@@ -650,6 +664,131 @@ static void testRawMidiPlaysAtExactTick() {
     if (onsets.size() == 2) CHECK(onsets[0] == 325 && onsets[1] == 24425, "hits at %lld, %lld", (long long)onsets[0], (long long)onsets[1]);
 }
 
+
+// ---- Looper (pad one-shot từ thông số Patch) ---------------------------------------------
+
+static std::array<int32_t, kPatchInts> P(float toneAmp, float fS, float fE, float pitchTau, float toneTau,
+                                         float noiseAmp, float noiseTau, float hp, float lp, int bursts,
+                                         float gap, float tail, float t2r, float t2a, int choke, float gain,
+                                         float drive) {
+    auto q = [](float v) { return static_cast<int32_t>(std::lround(v * 1000.0f)); };
+    return {q(toneAmp), q(fS),  q(fE),  q(pitchTau), q(toneTau), q(noiseAmp), q(noiseTau), q(hp), q(lp),
+            bursts * 1000, q(gap), q(tail), q(t2r),  q(t2a),  choke * 1000, q(gain), q(drive)};
+}
+// decodeSong đọc chokeGroup trực tiếp (không nhân 1000); P() nhân để mọi trường cùng một quy ước, nên sửa lại ở đây.
+static std::array<int32_t, kPatchInts> PI(std::array<int32_t, kPatchInts> a) {
+    a[9] /= 1000;   // bursts
+    a[14] /= 1000;  // chokeGroup
+    return a;
+}
+
+static Kit testKit() {
+    Kit k;
+    k.push_back(PI(P(0.9f, 140, 45, 40, 250, 0.2f, 4, 1, 0, 0, 11, 90, 0, 0, 0, 1, 0)));     // 0: kick (tone)
+    k.push_back(PI(P(0, 0, 0, 30, 200, 0.5f, 40, 1, 0, 0, 11, 90, 0, 0, 0, 1, 0)));          // 1: hat (nhiễu cao)
+    k.push_back(PI(P(0, 0, 0, 30, 200, 0.4f, 150, 1, 0, 0, 11, 90, 0, 0, 1, 1, 0)));         // 2: hat mở (nhóm 1)
+    k.push_back(PI(P(0, 0, 0, 30, 200, 0.4f, 40, 1, 0, 0, 11, 90, 0, 0, 1, 1, 0)));          // 3: hat đóng (nhóm 1)
+    k.push_back(PI(P(2.0f, 55, 40, 80, 150, 0, 100, 0, 0, 0, 11, 90, 0, 0, 0, 2, 12)));      // 4: 808 méo rất mạnh
+    return k;
+}
+
+static int zeroCrossings(const std::vector<float>& x, size_t from, size_t to) {
+    int z = 0;
+    for (size_t i = from + 1; i < to; ++i) z += (x[i - 1] < 0.0f) != (x[i] < 0.0f) ? 1 : 0;
+    return z;
+}
+
+static void testLooperRoutingAndTone() {
+    begin("Looper: pad đúng thứ tự trong kit, tone khác nhiễu, nốt rơi đúng khung hình");
+    // 120 BPM, 48 kHz: 960 tick = 1 phách = 24000 khung hình
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {{960, 240, 1, 100}, {1920, 240, 0, 100}}, testKit())}));
+    core->play(0);
+    const auto out = renderAll(*core, 1, 48000 * 2 + 24000, 480);
+    const auto on = findOnsets(out);
+    CHECK(on.size() == 2, "expected 2 onsets, got %zu", on.size());
+    if (on.size() == 2) {
+        CHECK(std::llabs(on[0] - 24000) <= 1, "hat onset %lld", static_cast<long long>(on[0]));
+        CHECK(std::llabs(on[1] - 48000) <= 1, "kick onset %lld", static_cast<long long>(on[1]));
+    }
+    const int zHat = zeroCrossings(out, 24000, 24000 + 600);
+    const int zKick = zeroCrossings(out, 48000, 48000 + 600);
+    CHECK(zHat > 100, "hat should be noisy, zc=%d", zHat);
+    CHECK(zKick < 40, "kick should be a low tone, zc=%d", zKick);
+}
+
+static void testLooperLive() {
+    begin("Looper: bấm pad trực tiếp, pad ngoài kit / kit rỗng im lặng không lỗi");
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, testKit()), TrackSpec(Inst::Looper, {}, {})}));
+    renderAll(*core, 1, 480, 480);
+    core->noteOn(static_cast<int>(Inst::Looper), 0, 1, 100);
+    auto a = renderAll(*core, 1, 2400, 480);
+    CHECK(peak(a, 0, a.size()) > 0.05f, "live pad silent");
+    core->noteOn(static_cast<int>(Inst::Looper), 0, 31, 100);   // ngoài kit
+    core->noteOn(static_cast<int>(Inst::Looper), 1, 0, 100);    // kit rỗng
+    core->noteOn(static_cast<int>(Inst::Looper), 0, -5, 100);   // chỉ số âm
+    renderAll(*core, 1, 48000, 480);  // chờ pad đầu tắt hẳn
+    auto b = renderAll(*core, 1, 4800, 480);
+    CHECK(peak(b, 0, b.size()) == 0.0f, "invalid pads should stay silent (peak %f)", peak(b, 0, b.size()));
+    CHECK(core->activeVoiceCount() == 0, "voices left: %d", core->activeVoiceCount());
+}
+
+static void testLooperChoke() {
+    begin("Looper: hi-hat đóng chặn hi-hat mở cùng nhóm");
+    auto run = [&](int second) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, testKit())}));
+        renderAll(*core, 1, 480, 480);
+        core->noteOn(static_cast<int>(Inst::Looper), 0, 2, 100);
+        renderAll(*core, 1, 2400, 480);
+        core->noteOn(static_cast<int>(Inst::Looper), 0, second, 100);
+        renderAll(*core, 1, 24000, 480);  // 0,5 s sau
+        return core->activeVoiceCount();
+    };
+    CHECK(run(3) == 0, "open hat should be choked by closed hat (voices %d)", run(3));
+    CHECK(run(1) == 1, "different group must not choke (voices %d)", run(1));
+}
+
+static void testLooperLoopBitExactAndBounded() {
+    begin("Looper: các vòng lặp giống hệt từng bit; méo mạnh vẫn nằm trong [-1, 1]");
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    publish(*core, encode(true, 0, 3840, 3840,
+                          {TrackSpec(Inst::Looper, {{0, 240, 0, 110}, {960, 240, 1, 90}, {1920, 240, 4, 127}, {2880, 240, 2, 80}},
+                                     testKit())}));
+    core->play(0);
+    const size_t bar = 96000;
+    const auto out = renderAll(*core, 1, static_cast<int>(bar) * 3, 480);
+    bool same = true, bounded = true;
+    for (size_t i = 0; i < bar; ++i) {
+        if (out[i + bar] != out[i + 2 * bar]) same = false;  // vòng 1 chưa có đuôi âm của vòng trước nên so vòng 2 và 3
+        if (!(std::fabs(out[i]) <= 1.0f)) bounded = false;
+    }
+    CHECK(same, "loop iterations differ (steady state)");
+    CHECK(bounded, "output exceeded [-1, 1] or NaN");
+    CHECK(peak(out, 0, bar) > 0.1f, "silent loop");
+}
+
+static void testLooperExtremeParams() {
+    begin("Looper: thông số cực đoan được kẹp, không NaN, voice vẫn tự tắt");
+    Kit k;
+    std::array<int32_t, kPatchInts> crazy;
+    crazy.fill(2000000000);
+    k.push_back(crazy);
+    std::array<int32_t, kPatchInts> neg;
+    neg.fill(-2000000000);
+    k.push_back(neg);
+    auto core = std::unique_ptr<EngineCore>(newMono(44100, 120, false));
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, k)}));
+    renderAll(*core, 1, 480, 480);
+    core->noteOn(static_cast<int>(Inst::Looper), 0, 0, 127);
+    core->noteOn(static_cast<int>(Inst::Looper), 0, 1, 127);
+    const auto out = renderAll(*core, 1, 44100 * 12, 480);
+    bool ok = true;
+    for (float v : out) ok = ok && std::isfinite(v) && std::fabs(v) <= 1.0f;
+    CHECK(ok, "non-finite or out-of-range sample");
+}
+
 int main() {
     testExactBeatsAt120();
     testNoDriftAtOddTempo();
@@ -676,6 +815,11 @@ int main() {
     testRawMidiPlaysAtExactTick();
     testDenoise();
     testDenoiseNoOpAndSafety();
+    testLooperRoutingAndTone();
+    testLooperLive();
+    testLooperChoke();
+    testLooperLoopBitExactAndBounded();
+    testLooperExtremeParams();
 
     if (g_failures == 0) {
         std::printf("\nALL %d TESTS PASSED\n", g_tests);

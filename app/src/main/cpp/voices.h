@@ -81,9 +81,17 @@ struct Voice {
     float tailDecay = 0.0f;
     int age = 0, burstGap = 0, burstsLeft = 0;
     double invSr = 0.0;
+    // Mở rộng cho pad Looper: lọc thấp nhiễu, thành phần tone thứ hai, nhóm chặn (choke)
+    float noiseLpK = 1.0f, lpState = 0.0f;  // lpK = 1: không lọc
+    float t2Ratio = 0.0f, t2Amp = 0.0f;
+    double phase2 = 0.0;
+    int chokeGroup = 0;
 
     // seed: hạt giống nhiễu. Nốt do sequencer phát lấy từ (tick, track, nốt) nên mỗi vòng lặp giống hệt nhau từng bit.
     void start(Inst inst, int midiNote, int velocity, int sampleRate, uint64_t startOrder, uint64_t seed);
+    // Pad Looper: phát một âm one-shot từ thông số Patch (tham số được kẹp về khoảng an toàn).
+    void startPatch(const Patch& p, int padIndex, int velocity, int sampleRate, uint64_t startOrder,
+                    uint64_t seed);
 
     void beginRelease(float coef) noexcept {
         if (!active || releasing) return;
@@ -156,14 +164,25 @@ private:
             pitchEnv *= pitchDecay;
             phase += f * invSr;
             if (phase >= 1.0) phase -= 1.0;
-            out += toneAmp * e1 * tbl.at(phase);
+            float tone = tbl.at(phase);
+            if (t2Amp > 0.0f) {
+                phase2 += f * t2Ratio * invSr;
+                phase2 -= static_cast<double>(static_cast<int64_t>(phase2));
+                tone += t2Amp * tbl.at(phase2);
+            }
+            out += toneAmp * e1 * tone;
             e1 *= d1;
         }
         if (noiseAmp > 0.0f) {
             const float n = rng.next();
             const float hp = 0.5f * (n - prevN);
             prevN = n;
-            out += noiseAmp * e2 * (n + (hp - n) * noiseHP);
+            float x = n + (hp - n) * noiseHP;
+            if (noiseLpK < 1.0f) {
+                lpState += (x - lpState) * noiseLpK;
+                x = lpState;
+            }
+            out += noiseAmp * e2 * x;
             e2 *= d2;
             if (burstsLeft > 0 && ++age >= burstGap) {  // clap: nhiều tiếng vỗ nối nhau
                 age = 0;
@@ -172,6 +191,10 @@ private:
             }
         }
         if (e1 < 1e-3f && e2 < 1e-3f && burstsLeft == 0) active = false;
+        if (drive > 0.0f) {  // méo mềm (808 rè); đầu ra bị chặn trong [-0.8, 0.8]
+            const float xd = std::clamp(out * (1.0f + drive), -1.0f, 1.0f);
+            out = (1.5f * xd - 0.5f * xd * xd * xd) * 0.8f;
+        }
         return out;
     }
 };
@@ -191,6 +214,12 @@ inline void Voice::start(Inst inst, int midiNote, int velocity, int sampleRate, 
     attack = 1.0f;
     release = 1.0f;
     phase = 0.0;
+    phase2 = 0.0;
+    drive = 0.0f;
+    noiseLpK = 1.0f;
+    lpState = 0.0f;
+    t2Amp = t2Ratio = 0.0f;
+    chokeGroup = 0;
 
     if (inst == Inst::Piano || inst == Inst::Bass) {
         kind = Kind::Harmonic;
@@ -304,6 +333,58 @@ inline void Voice::start(Inst inst, int midiNote, int velocity, int sampleRate, 
         if (toneAmp <= 0.0f) e1 = 0.0f;
         if (noiseAmp <= 0.0f) e2 = 0.0f;
     }
+}
+
+inline void Voice::startPatch(const Patch& p, int padIndex, int velocity, int sampleRate, uint64_t startOrder,
+                              uint64_t seed) {
+    const double sr = sampleRate;
+    const float vel = static_cast<float>(std::clamp(velocity, 1, 127)) / 127.0f;
+    auto dec = [&](double ms) {
+        const double tau = std::clamp(ms, 0.5, 4000.0) * 0.001;
+        return static_cast<float>(std::exp(-1.0 / (tau * sr)));
+    };
+    auto amp = [](float a) { return std::clamp(a, 0.0f, 2.0f); };
+
+    kind = Kind::Drum;
+    active = true;
+    releasing = false;
+    note = padIndex;
+    order = startOrder;
+    endTick = -1;
+    attack = 1.0f;
+    release = 1.0f;
+    phase = phase2 = 0.0;
+    piece = 0;
+    variant = 2;
+    invSr = 1.0 / sr;
+    gain = vel * std::clamp(p.gain, 0.0f, 2.0f);
+    drive = std::clamp(p.drive, 0.0f, 12.0f);
+    chokeGroup = std::clamp(p.chokeGroup, 0, 255);
+
+    const float fMax = static_cast<float>(0.45 * sr);
+    toneAmp = amp(p.toneAmp);
+    fStart = std::clamp(p.fStart, 20.0f, fMax);
+    fEnd = std::clamp(p.fEnd, 20.0f, fMax);
+    pitchEnv = 1.0f;
+    pitchDecay = dec(p.pitchTauMs);
+    d1 = dec(p.toneTauMs);
+    e1 = toneAmp > 0.0f ? 1.0f : 0.0f;
+    t2Amp = toneAmp > 0.0f ? amp(p.tone2Amp) : 0.0f;
+    t2Ratio = std::clamp(p.tone2Ratio, 0.0f, 12.0f);
+    if (t2Ratio <= 0.0f) t2Amp = 0.0f;
+
+    noiseAmp = amp(p.noiseAmp);
+    e2 = noiseAmp > 0.0f ? 1.0f : 0.0f;
+    d2 = dec(p.noiseTauMs);
+    noiseHP = std::clamp(p.noiseHP, 0.0f, 1.0f);
+    noiseLpK = 1.0f - 0.97f * std::clamp(p.noiseLP, 0.0f, 1.0f);
+    prevN = 0.0f;
+    lpState = 0.0f;
+    burstsLeft = noiseAmp > 0.0f ? std::clamp(p.bursts, 0, 8) : 0;
+    burstGap = std::max(1, static_cast<int>(std::clamp(p.burstGapMs, 1.0f, 60.0f) * 0.001 * sr));
+    tailDecay = dec(p.tailTauMs);
+    age = 0;
+    rng.s = static_cast<uint32_t>(seed * 2246822519u) | 1u;
 }
 
 }  // namespace band

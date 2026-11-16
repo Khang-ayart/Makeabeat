@@ -47,13 +47,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bandstudio.app.StudioViewModel
 import com.bandstudio.app.model.BAR_TICKS
+import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.Clip
 import com.bandstudio.app.model.DRUM_NAMES
 import com.bandstudio.app.model.MAX_CLIP_BARS
+import com.bandstudio.app.model.PADS_PER_ROW
+import com.bandstudio.app.model.PAD_COUNT
 import com.bandstudio.app.model.PPQ
 import com.bandstudio.app.model.Quantizer
 import com.bandstudio.app.model.ROLL_HIGH
 import com.bandstudio.app.model.ROLL_LOW
+import com.bandstudio.app.model.SoundCat
 import com.bandstudio.app.model.STEP_TICKS
 import com.bandstudio.app.model.Track
 import com.bandstudio.app.model.isBlackKey
@@ -80,9 +84,17 @@ fun EditorScreen(vm: StudioViewModel) {
         EditorTopBar(vm, track, clip)
         EditorToolbar(vm, track, clip)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (track.instrument.isDrum) DrumSequencer(vm, clip, color) else PianoRoll(vm, track, clip, color)
+            when {
+                track.instrument.isLooper -> PadSequencer(vm, clip, looperRows(track))
+                track.instrument.isDrum -> PadSequencer(vm, clip, drumRows(color))
+                else -> PianoRoll(vm, track, clip, color)
+            }
         }
-        if (track.instrument.isDrum) DrumPads(vm, color) else KeyboardSection(vm, track, color)
+        when {
+            track.instrument.isLooper -> LooperPads(vm, track)
+            track.instrument.isDrum -> DrumPads(vm, color)
+            else -> KeyboardSection(vm, track, color)
+        }
     }
 }
 
@@ -105,7 +117,7 @@ private fun EditorTopBar(vm: StudioViewModel, track: Track, clip: Clip) {
 
 @Composable
 private fun EditorToolbar(vm: StudioViewModel, track: Track, clip: Clip) {
-    val drum = track.instrument.isDrum
+    val drum = track.instrument.oneShot
     val cs = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
@@ -138,7 +150,11 @@ private fun EditorToolbar(vm: StudioViewModel, track: Track, clip: Clip) {
         }
         if (drum) {
             Text(
-                "Chạm ô trên lưới để bật/tắt tiếng trống. Ghi trực tiếp: bấm ●, rồi gõ các pad.",
+                if (track.instrument.isLooper) {
+                    "Mỗi hàng pad là một loại âm, 4 pad là 4 lựa chọn. Chạm ô trên lưới để xếp nhịp, hoặc bấm ● rồi tự gõ pad."
+                } else {
+                    "Chạm ô trên lưới để bật/tắt tiếng trống. Ghi trực tiếp: bấm ●, rồi gõ các pad."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = cs.onSurfaceVariant,
             )
@@ -273,46 +289,70 @@ private fun PlayheadOverlay(vm: StudioViewModel, clip: Clip, pxPerStep: Float) {
 }
 
 // =========================================================================================
-// Drum Step Sequencer + Drum Pad
+// Step Sequencer + Pad (Drum Kit / Drum Pad / Looper dùng chung)
 // =========================================================================================
 
+/** Một hàng của sequencer: tên, màu và số pad (pitch của nốt). */
+private class PadRow(val name: String, val color: Color, val pitch: Int, val groupStart: Boolean = false)
+
+private fun drumRows(color: Color) = DRUM_NAMES.mapIndexed { i, n -> PadRow(n, color, i) }
+
+private fun shortCat(c: SoundCat) = when (c) {
+    SoundCat.KICK -> "Kick"
+    SoundCat.SNARE -> "Snare"
+    SoundCat.HAT -> "Hat"
+    SoundCat.PERC -> "Perc"
+    SoundCat.BASS -> "Bass"
+}
+
+private fun looperRows(track: Track): List<PadRow> = List(PAD_COUNT) { i ->
+    val cat = SoundCat.entries[i / PADS_PER_ROW]
+    val label = track.kit.getOrNull(i)?.let { Catalog.padLabel(it) } ?: "—"
+    PadRow("${shortCat(cat)} · $label", Color(cat.color), i, groupStart = i % PADS_PER_ROW == 0)
+}
+
 @Composable
-private fun DrumSequencer(vm: StudioViewModel, clip: Clip, color: Color) {
+private fun PadSequencer(vm: StudioViewModel, clip: Clip, rows: List<PadRow>) {
     val density = LocalDensity.current
     val rowH = 32.dp
     val cellW = 28.dp
-    val rowsN = DRUM_NAMES.size
+    val rowsN = rows.size
     val cols = clip.bars * 16
     val rowPx = with(density) { rowH.toPx() }
     val cellPx = with(density) { cellW.toPx() }
     val cs = MaterialTheme.colorScheme
     val hScroll = rememberScrollState()
+    val labelW = if (rows.size > DRUM_NAMES.size) 124.dp else 84.dp
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Row {
-            Column(Modifier.width(84.dp)) {
-                DRUM_NAMES.forEachIndexed { i, name ->
+            Column(Modifier.width(labelW)) {
+                rows.forEach { row ->
                     Box(
                         Modifier
                             .fillMaxWidth()
                             .height(rowH)
                             .background(cs.surfaceVariant)
                             .border(0.5.dp, cs.outline)
-                            .pointerInput(i) {
+                            .pointerInput(row.pitch) {
                                 detectTapGestures(
                                     onPress = {
-                                        vm.keyDown(i)
+                                        vm.keyDown(row.pitch)
                                         try {
                                             tryAwaitRelease()
                                         } finally {
-                                            vm.keyUp(i)
+                                            vm.keyUp(row.pitch)
                                         }
                                     },
                                 )
                             },
                         contentAlignment = Alignment.CenterStart,
                     ) {
-                        Text(name, Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                        Box(Modifier.width(4.dp).fillMaxHeight().background(row.color))
+                        Text(
+                            row.name, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
@@ -321,11 +361,11 @@ private fun DrumSequencer(vm: StudioViewModel, clip: Clip, color: Color) {
                     Canvas(
                         Modifier
                             .matchParentSize()
-                            .pointerInput(Unit) {
+                            .pointerInput(rowsN) {
                                 detectTapGestures { off ->
-                                    val row = (off.y / rowPx).toInt().coerceIn(0, rowsN - 1)
+                                    val r = (off.y / rowPx).toInt().coerceIn(0, rowsN - 1)
                                     val col = (off.x / cellPx).toInt()
-                                    vm.toggleDrumStep(row, col)
+                                    vm.toggleDrumStep(rows[r].pitch, col)
                                 }
                             },
                     ) {
@@ -341,13 +381,15 @@ private fun DrumSequencer(vm: StudioViewModel, clip: Clip, color: Color) {
                             drawLine(Color.White.copy(alpha = alpha), Offset(x, 0f), Offset(x, size.height), 1f)
                         }
                         for (r in 0..rowsN) {
-                            drawLine(Color.White.copy(alpha = 0.1f), Offset(0f, r * rowPx), Offset(size.width, r * rowPx), 1f)
+                            val strong = rows.getOrNull(r)?.groupStart == true
+                            drawLine(Color.White.copy(alpha = if (strong) 0.45f else 0.1f), Offset(0f, r * rowPx), Offset(size.width, r * rowPx), if (strong) 2f else 1f)
                         }
                         val corner = CornerRadius(5.dp.toPx())
+                        val rowOf = rows.withIndex().associate { (i, r) -> r.pitch to i }
                         for (n in clip.notes) {
-                            if (n.pitch !in 0 until rowsN) continue
+                            val r = rowOf[n.pitch] ?: continue
                             val x = n.start.toFloat() / STEP_TICKS * cellPx
-                            drawRoundRect(color, Offset(x + 2f, n.pitch * rowPx + 2f), Size(cellPx - 4f, rowPx - 4f), corner)
+                            drawRoundRect(rows[r].color, Offset(x + 2f, r * rowPx + 2f), Size(cellPx - 4f, rowPx - 4f), corner)
                         }
                     }
                     PlayheadOverlay(vm, clip, cellPx)
@@ -362,15 +404,36 @@ private fun DrumPads(vm: StudioViewModel, color: Color) {
     Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (group in DRUM_NAMES.indices.chunked(5)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (i in group) DrumPad(vm, i, color, Modifier.weight(1f).height(54.dp))
+                for (i in group) DrumPad(vm, i, DRUM_NAMES[i], color, Modifier.weight(1f).height(54.dp))
                 repeat(5 - group.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
 }
 
+/** Lưới pad Looper: mỗi hàng một loại âm (Kick, Snare, Hi-hat, Percussion, 808/Bass), mỗi hàng 4 lựa chọn của thể loại. */
 @Composable
-private fun DrumPad(vm: StudioViewModel, piece: Int, color: Color, modifier: Modifier) {
+private fun LooperPads(vm: StudioViewModel, track: Track) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        SoundCat.entries.forEachIndexed { row, cat ->
+            val color = Color(cat.color)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    cat.label, Modifier.width(64.dp), style = MaterialTheme.typography.labelSmall,
+                    color = color, maxLines = 2,
+                )
+                for (col in 0 until PADS_PER_ROW) {
+                    val i = row * PADS_PER_ROW + col
+                    val label = track.kit.getOrNull(i)?.let { Catalog.padLabel(it) } ?: "—"
+                    DrumPad(vm, i, label, color, Modifier.weight(1f).height(42.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DrumPad(vm: StudioViewModel, piece: Int, label: String, color: Color, modifier: Modifier) {
     var pressed by remember { mutableStateOf(false) }
     Box(
         modifier
@@ -393,7 +456,7 @@ private fun DrumPad(vm: StudioViewModel, piece: Int, color: Color, modifier: Mod
             },
         contentAlignment = Alignment.Center,
     ) {
-        Text(DRUM_NAMES[piece], style = MaterialTheme.typography.labelMedium, maxLines = 1, textAlign = TextAlign.Center)
+        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
     }
 }
 

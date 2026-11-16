@@ -17,8 +17,9 @@ enum class Inst : uint8_t {
     Bass = 3,
     DrumKit = 4,
     DrumPad = 5,
+    Looper = 6,  // lưới pad: mỗi pad phát một âm tổng hợp theo Patch của kit
 };
-constexpr int kInstCount = 6;
+constexpr int kInstCount = 7;
 
 inline bool isDrum(Inst i) { return i == Inst::DrumKit || i == Inst::DrumPad; }
 
@@ -36,6 +37,22 @@ enum DrumPiece : uint8_t {
     kDrumPieces
 };
 
+// Thông số một âm "one-shot" (kick, snare, hi-hat, percussion, 808...). Danh mục âm nằm ở Kotlin,
+// engine chỉ nhận thông số nên thêm âm mới không cần sửa C++.
+constexpr int kPatchInts = 17;  // số số nguyên mỗi patch trong mảng gửi sang (số thực x1000)
+constexpr int kMaxKit = 32;
+struct Patch {
+    float toneAmp = 0, fStart = 0, fEnd = 0;       // âm có cao độ: tần số đầu/cuối (Hz)
+    float pitchTauMs = 30, toneTauMs = 200;        // tốc độ trượt cao độ / thời gian tắt
+    float noiseAmp = 0, noiseTauMs = 100;          // thành phần nhiễu
+    float noiseHP = 0, noiseLP = 0;                // 0..1: lọc cao / lọc thấp (làm tối)
+    int bursts = 0;                                // clap: số tiếng vỗ
+    float burstGapMs = 11, tailTauMs = 90;
+    float tone2Ratio = 0, tone2Amp = 0;            // thành phần thứ hai (chuông, cowbell...)
+    int chokeGroup = 0;                            // >0: voice cùng nhóm bị ngắt khi pad mới phát
+    float gain = 1.0f, drive = 0;                  // drive>0: méo mềm (808 rè)
+};
+
 struct Note {
     int32_t start;  // tick tuyệt đối trong bài
     int32_t dur;    // độ dài (tick)
@@ -46,6 +63,7 @@ struct Note {
 struct TrackData {
     Inst inst = Inst::Piano;
     std::vector<Note> notes;  // đã sắp theo start
+    std::vector<Patch> kit;   // chỉ track Looper: pitch của nốt = chỉ số pad trong kit
 };
 
 // Ảnh chụp bất biến của bài nhạc. UI dựng rồi "xuất bản" sang luồng âm thanh, sau khi

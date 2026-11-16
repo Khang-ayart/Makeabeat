@@ -78,4 +78,5 @@ dependencies {
     implementation("com.google.oboe:oboe:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303") // org.json thật cho unit test (android.jar chỉ có bản rỗng)
 }
