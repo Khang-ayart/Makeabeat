@@ -8,7 +8,7 @@ Phòng thu âm nhạc cá nhân trên Android, theo hướng mini DAW kiểu Ban
 2. **Studio** (màn hình chính): *Thêm nhạc cụ* (Piano, Acoustic Guitar, Electric Guitar, Bass, Drum Kit, Drum Pad, **Looper**). Mỗi nhạc cụ là một track; M = tắt tiếng, S = nghe riêng; chạm tên track để chỉnh âm lượng / pan.
 3. Chạm vào **ô trống** trên track để tạo clip (2 ô nhịp). Chạm clip để chọn, chạm lần nữa (hoặc *Sửa*) để mở trình soạn. *Nhân đôi / Lùi / Tiến / ± ô / Xóa* nằm ở thanh dưới.
 4. **Trình soạn**: Piano Roll + phím (nhạc cụ giai điệu), hoặc Step Sequencer + Drum Pad (trống). Đoạn đang sửa phát lặp, các track khác vẫn chạy làm nền. Bấm ● để ghi trực tiếp.
-5. **Looper**: chọn *Looper*, rồi chọn thể loại (Ballad, Pop, Hip-hop, Trap/808, Lo-fi, R&B, Rock, EDM, Jazz, Acoustic/Folk, Latin). Mỗi thể loại cho lưới pad 5 hàng — Kick, Snare, Hi-hat, Percussion, 808/Bass — mỗi hàng **4 lựa chọn** hợp thể loại đó (ví dụ Ballad: kick mềm/trầm, snare chổi/gõ viền; Trap: kick 808 boom, hi-hat tick ngắn, 808 dài). Không có loop dựng sẵn: bạn tự bấm pad, bấm ● để ghi, hoặc xếp nhịp trên lưới. Đổi thể loại sau này ở hộp thoại track (nốt giữ nguyên, âm đổi theo).
+5. **Looper** (giống Looper của BandLab, không dùng gói loop tải về): chọn *Looper*, rồi chọn thể loại (Ballad, Pop, Hip-hop, Trap/808, Lo-fi, R&B, Rock, EDM, Jazz, Acoustic/Folk, Latin). Bạn được lưới pad 5 hàng — Kick, Snare, Hi-hat, Percussion, 808/Bass — mỗi hàng **4 pad**, mỗi pad là một nhịp lặp 1 ô do app tự sinh theo thể loại (nhịp chính, biến tấu, thưa, dày). Chạm pad Bass thì bass tự chạy; chạm thêm Snare thì snare tự nhập vào đúng nhịp đang chạy. Mỗi hàng chỉ một pad sáng; chạm pad khác trong hàng để đổi, chạm lại để tắt. Pad mới vào ở **đầu ô nhịp kế tiếp** nên luôn khớp. Bấm ● để ghi, bấm lần nữa thì phần bạn chơi thành clip trên track, sửa tiếp bằng Step Sequencer. Mở lại lưới từ hộp thoại track (*Mở lưới Looper*; ở đó cũng đổi được thể loại).
 6. Quay lại Studio, đặt BPM, bấm Phát. Chạm số ô nhịp trên thước để đổi vị trí phát; *Lặp* để lặp cả bài.
 
 Dự án tự lưu trên máy (JSON trong bộ nhớ riêng của ứng dụng). Có Undo / Redo.
@@ -31,7 +31,7 @@ app/src/main/java/com/bandstudio/app/
   model/            Project / Track / Clip / Note, Quantizer, mã hóa gửi engine (v2), lưu JSON, Sounds.kt (danh mục 39 âm + 11 thể loại)
   StudioViewModel   Trạng thái, Undo/Redo, ghi MIDI có bù độ trễ
   ui/               Home, Studio (timeline), Editor (Piano Roll, Drum Sequencer, Pad, phím)
-native-tests/core_test.cpp   30 bài kiểm thử lõi
+native-tests/core_test.cpp   35 bài kiểm thử lõi
 app/src/test/               Unit test Kotlin (Quantizer, mã hóa bài nhạc)
 ```
 

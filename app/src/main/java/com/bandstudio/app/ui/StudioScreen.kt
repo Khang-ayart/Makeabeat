@@ -112,7 +112,7 @@ fun StudioScreen(vm: StudioViewModel) {
         GenrePicker(
             title = "Chọn thể loại cho Looper",
             current = null,
-            onPick = { vm.addTrack(Instrument.LOOPER, it); showGenrePicker = false },
+            onPick = { vm.addLooperAndOpen(it); showGenrePicker = false },
             onDismiss = { showGenrePicker = false },
         )
     }
@@ -526,6 +526,7 @@ private fun TrackDialog(vm: StudioViewModel, t: Track, onClose: () -> Unit) {
                 Text("Trái  –  Phải", style = MaterialTheme.typography.labelLarge)
                 Slider(value = t.pan, onValueChange = { vm.setTrackPan(t.id, it) }, valueRange = -1f..1f)
                 if (t.instrument.isLooper) {
+                    Button(onClick = { onClose(); vm.openLauncher(t.id) }) { Text("Mở lưới Looper") }
                     OutlinedButton(onClick = { showGenres = true }) {
                         Text("Thể loại: ${Catalog.genre(t.genreId)?.label ?: "—"}  ›")
                     }

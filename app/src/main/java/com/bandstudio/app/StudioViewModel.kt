@@ -3,6 +3,7 @@ package com.bandstudio.app
 import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -15,6 +16,8 @@ import com.bandstudio.app.model.Instrument
 import com.bandstudio.app.model.MAX_BARS
 import com.bandstudio.app.model.MAX_CLIP_BARS
 import com.bandstudio.app.model.MAX_TRACKS
+import com.bandstudio.app.model.PADS_PER_ROW
+import com.bandstudio.app.model.PAD_COUNT
 import com.bandstudio.app.model.NoteEvent
 import com.bandstudio.app.model.PPQ
 import com.bandstudio.app.model.Project
@@ -35,6 +38,8 @@ sealed interface Screen {
     data object Home : Screen
     data object Studio : Screen
     data class Editor(val trackId: Int, val clipId: Int) : Screen
+    /** Lưới Looper: pad là nhịp lặp, bật/tắt bám theo đồng hồ chung. */
+    data class Launcher(val trackId: Int) : Screen
 }
 
 /**
@@ -76,6 +81,16 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var canUndo by mutableStateOf(false)
         private set
+
+    // ---- Lưới Looper ----
+    /** Bit 0-19: pad đang chạy; 20-39: chờ bật; 40-59: chờ tắt (lấy từ engine mỗi khung hình). */
+    var padMask by mutableLongStateOf(0L)
+        private set
+    var launcherRecording by mutableStateOf(false)
+        private set
+    private var launcherRecStartTick = 0
+    private val launcherEvents = ArrayList<IntArray>() // {tick, track, kitIdx, vel}
+    private val eventBuf = IntArray(4)
     var canRedo by mutableStateOf(false)
         private set
 
@@ -115,6 +130,10 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     private fun publishSong() {
         val p = project ?: return
         val s = screen
+        if (s is Screen.Launcher) { // chạy tự do, không có vùng lặp: pad tự lặp theo từng ô nhịp
+            AudioEngine.setSong(p.encodeForEngine(false, 0, 0, 0, launcherTrackId = s.trackId))
+            return
+        }
         if (s is Screen.Editor) {
             val clip = p.track(s.trackId)?.clips?.firstOrNull { it.id == s.clipId }
             if (clip != null) { // trình soạn: lặp đúng đoạn clip đang sửa, vẫn nghe các track khác làm nền
@@ -154,6 +173,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Gọi mỗi khung hình từ giao diện: cập nhật vị trí đầu phát, phát hiện hết bài. */
     fun poll() {
+        if (screen is Screen.Launcher) pollLauncher()
         if (!playing) return
         if (AudioEngine.isPlaying()) {
             playheadTick = (AudioEngine.beatPosition() * PPQ).toInt()
@@ -191,6 +211,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Ứng dụng xuống nền: dừng phát, lưu ngay, engine sẽ bị đóng. */
     fun onBackground() {
+        if (launcherRecording) finishLauncherRecording()
         stopPlayback()
         AudioEngine.allNotesOff()
         project?.let { store.save(it) }
@@ -246,6 +267,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     /** Trả true nếu đã xử lý (quay lại màn hình trước); false nếu nên thoát ứng dụng. */
     fun back(): Boolean = when (screen) {
         is Screen.Editor -> { exitEditor(); true }
+        is Screen.Launcher -> { exitLauncher(); true }
         Screen.Studio -> { closeProject(); true }
         Screen.Home -> false
     }
@@ -255,6 +277,137 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         AudioEngine.allNotesOff()
         screen = Screen.Editor(trackId, clipId)
         publishSong()
+    }
+
+    // =====================================================================================
+    // Lưới Looper
+    // =====================================================================================
+
+    fun openLauncher(trackId: Int) {
+        val p = project ?: return
+        if (p.track(trackId)?.instrument?.isLooper != true) return
+        stopPlayback()
+        AudioEngine.allNotesOff()
+        launcherRecording = false
+        padMask = 0L
+        screen = Screen.Launcher(trackId)
+        publishSong()
+    }
+
+    /** Thêm track Looper theo thể loại rồi mở thẳng lưới pad. */
+    fun addLooperAndOpen(genre: Genre) {
+        addTrack(Instrument.LOOPER, genre)
+        val t = project?.tracks?.lastOrNull { it.instrument.isLooper } ?: return
+        openLauncher(t.id)
+    }
+
+    fun exitLauncher() {
+        if (launcherRecording) finishLauncherRecording()
+        AudioEngine.setPadRecording(false)
+        stopPlayback()
+        AudioEngine.allNotesOff()
+        padMask = 0L
+        screen = Screen.Studio
+        publishSong()
+    }
+
+    private fun launcherIndex(): Int {
+        val s = screen as? Screen.Launcher ?: return -1
+        return project?.trackIndex(s.trackId) ?: -1
+    }
+
+    /**
+     * Chạm pad: chưa chạy thì bật (vào đầu ô nhịp kế, hoặc ngay nếu đang dừng), đang chạy thì tắt.
+     * Mỗi hàng chỉ một pad; bật pad khác trong hàng thì pad cũ nhường chỗ ở đầu ô nhịp kế.
+     */
+    fun tapPad(pad: Int) {
+        val idx = launcherIndex()
+        if (idx < 0 || pad !in 0 until PAD_COUNT) return
+        val row = pad / PADS_PER_ROW
+        val m = padMask
+        val active = (m shr pad) and 1L == 1L
+        val queuedOff = (m shr (40 + pad)) and 1L == 1L
+        when {
+            active && !queuedOff -> AudioEngine.padLaunch(idx, row, -1)
+            else -> AudioEngine.padLaunch(idx, row, pad) // chưa chạy, hoặc đang chờ tắt -> huỷ lệnh tắt
+        }
+        if (!playing) {
+            AudioEngine.play(0)
+            playing = true
+            playheadTick = 0
+            cursorTick = 0
+            graceUntilNanos = System.nanoTime() + 400_000_000L
+            if (launcherRecording) launcherRecStartTick = 0
+        }
+    }
+
+    fun launcherStopAll() {
+        if (launcherRecording) finishLauncherRecording()
+        stopPlayback()
+        AudioEngine.allNotesOff()
+        padMask = 0L
+    }
+
+    fun toggleLauncherRecord() {
+        if (launcherRecording) {
+            finishLauncherRecording()
+            return
+        }
+        launcherEvents.clear()
+        while (AudioEngine.popPadEvent(eventBuf)) { /* bỏ sự kiện cũ */ }
+        // Đang chạy: bắt đầu ghi từ đầu ô nhịp kế để clip khớp ô nhịp. Đang dừng: ghi từ lúc pad đầu tiên được bật.
+        launcherRecStartTick = if (playing) {
+            val now = (AudioEngine.beatPosition() * PPQ).toInt()
+            (now / BAR_TICKS + 1) * BAR_TICKS
+        } else 0
+        AudioEngine.setPadRecording(true)
+        launcherRecording = true
+    }
+
+    private fun pollLauncher() {
+        val idx = launcherIndex()
+        if (idx < 0) return
+        padMask = AudioEngine.padMask(idx)
+        while (AudioEngine.popPadEvent(eventBuf)) {
+            if (launcherRecording && eventBuf[1] == idx && eventBuf[0] >= launcherRecStartTick) launcherEvents.add(eventBuf.copyOf())
+        }
+    }
+
+    /** Kết thúc ghi: biến các cú đánh thành clip(s) (mỗi clip tối đa 8 ô nhịp) đặt sau clip cuối của track. */
+    private fun finishLauncherRecording() {
+        val s = screen as? Screen.Launcher ?: return
+        pollLauncher()
+        launcherRecording = false
+        AudioEngine.setPadRecording(false)
+        val startTick = launcherRecStartTick
+        val nowTick = if (playing) (AudioEngine.beatPosition() * PPQ).toInt() else startTick
+        val lastEvent = launcherEvents.maxOfOrNull { it[0] } ?: startTick
+        // Ô nhịp nào đã trôi qua kể từ lúc ghi (kể cả khoảng lặng ở cuối) đều nằm trong clip.
+        val endTick = maxOf(nowTick, lastEvent + 1)
+        val bars = ((endTick - startTick + BAR_TICKS - 1) / BAR_TICKS).coerceIn(1, MAX_BARS)
+        if (launcherEvents.isEmpty()) return
+        val events = launcherEvents.toList()
+        launcherEvents.clear()
+        commit { p ->
+            val track = p.track(s.trackId) ?: return@commit p
+            var nextId = p.nextId
+            var bar = track.clips.maxOfOrNull { it.endBar } ?: 0
+            val clips = ArrayList<Clip>()
+            var done = 0
+            while (done < bars && bar < MAX_BARS) {
+                val n = minOf(MAX_CLIP_BARS, bars - done, MAX_BARS - bar)
+                val lo = startTick + done * BAR_TICKS
+                val hi = lo + n * BAR_TICKS
+                val notes = events.filter { it[0] in lo until hi }
+                    .map { NoteEvent(it[0] - lo, STEP_TICKS, it[2], it[3]) }
+                    .distinctBy { it.pitch to it.start }
+                    .sortedBy { it.start }
+                clips.add(Clip(nextId++, bar, n, notes))
+                bar += n
+                done += n
+            }
+            p.copy(tracks = p.tracks.map { if (it.id == s.trackId) it.copy(clips = it.clips + clips) else it }, nextId = nextId)
+        }
     }
 
     fun exitEditor() {
