@@ -149,7 +149,7 @@ private fun EditorToolbar(vm: StudioViewModel, track: Track, clip: Clip) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text("Lưới", style = MaterialTheme.typography.labelLarge)
-                for (g in Quantizer.GRIDS) ToggleChip(Quantizer.label(g), vm.gridStep == g, { vm.setGridStep(g) })
+                for (g in Quantizer.GRIDS) ToggleChip(Quantizer.label(g), vm.gridStep == g, { vm.chooseGrid(g) })
                 Text("  Độ dài nốt", style = MaterialTheme.typography.labelLarge)
                 for ((len, label) in NoteLengths) ToggleChip(label, vm.noteLen == len, { vm.setNoteLength(len) })
             }

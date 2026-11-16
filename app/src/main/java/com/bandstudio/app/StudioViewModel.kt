@@ -267,7 +267,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     // Chỉnh sửa dự án (có Undo / Redo)
     // =====================================================================================
 
-    private fun setProject(p: Project) {
+    private fun applyProject(p: Project) {
         project = p
         saveChannel.trySend(p)
         syncMix()
@@ -282,14 +282,14 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         undoStack.addLast(old)
         while (undoStack.size > 60) undoStack.removeFirst()
         redoStack.clear()
-        setProject(next.copy(updatedAt = System.currentTimeMillis()))
+        applyProject(next.copy(updatedAt = System.currentTimeMillis()))
         updateUndoFlags()
     }
 
     /** Thay đổi liên tục (kéo thanh trượt, BPM): lưu nhưng không đưa vào lịch sử hoàn tác. */
     private fun update(f: (Project) -> Project) {
         val old = project ?: return
-        setProject(f(old).copy(updatedAt = System.currentTimeMillis()))
+        applyProject(f(old).copy(updatedAt = System.currentTimeMillis()))
     }
 
     private fun updateUndoFlags() {
@@ -301,7 +301,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val cur = project ?: return
         val prev = undoStack.removeLastOrNull() ?: return
         redoStack.addLast(cur)
-        setProject(prev)
+        applyProject(prev)
         updateUndoFlags()
         fixSelection()
     }
@@ -310,7 +310,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val cur = project ?: return
         val next = redoStack.removeLastOrNull() ?: return
         undoStack.addLast(cur)
-        setProject(next)
+        applyProject(next)
         updateUndoFlags()
         fixSelection()
     }
@@ -408,7 +408,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     fun editorClip(): Clip? =
         (screen as? Screen.Editor)?.let { s -> project?.track(s.trackId)?.clips?.firstOrNull { it.id == s.clipId } }
 
-    fun setGridStep(step: Int) {
+    fun chooseGrid(step: Int) {
         gridStep = step
         if (noteLen < step) noteLen = step
     }
