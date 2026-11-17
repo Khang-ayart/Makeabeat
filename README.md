@@ -8,7 +8,7 @@ Phòng thu âm nhạc cá nhân trên Android, theo hướng mini DAW kiểu Ban
 2. **Studio** (màn hình chính): *Thêm nhạc cụ* (Piano, Acoustic Guitar, Electric Guitar, Bass, Drum Kit, Drum Pad, **Looper**). Mỗi nhạc cụ là một track; M = tắt tiếng, S = nghe riêng; chạm tên track để chỉnh âm lượng / pan.
 3. Chạm vào **ô trống** trên track để tạo clip (2 ô nhịp). Chạm clip để chọn, chạm lần nữa (hoặc *Sửa*) để mở trình soạn. *Nhân đôi / Lùi / Tiến / ± ô / Xóa* nằm ở thanh dưới.
 4. **Trình soạn**: Piano Roll + phím (nhạc cụ giai điệu), hoặc Step Sequencer + Drum Pad (trống). Đoạn đang sửa phát lặp, các track khác vẫn chạy làm nền. Bấm ● để ghi trực tiếp.
-5. **Looper** (giống Looper của BandLab, không dùng gói loop tải về): chọn *Looper*, rồi chọn thể loại (Ballad, Pop, Hip-hop, Trap/808, Lo-fi, R&B, Rock, EDM, Jazz, Acoustic/Folk, Latin). Bạn được lưới pad 5 hàng — Kick, Snare, Hi-hat, Percussion, 808/Bass — mỗi hàng **4 pad**, mỗi pad là một nhịp lặp 1 ô do app tự sinh theo thể loại (nhịp chính, biến tấu, thưa, dày). Chạm pad Bass thì bass tự chạy; chạm thêm Snare thì snare tự nhập vào đúng nhịp đang chạy. Mỗi hàng chỉ một pad sáng; chạm pad khác trong hàng để đổi, chạm lại để tắt. Pad mới vào ở **đầu ô nhịp kế tiếp** nên luôn khớp. Bấm ● để ghi, bấm lần nữa thì phần bạn chơi thành clip trên track, sửa tiếp bằng Step Sequencer. Mở lại lưới từ hộp thoại track (*Mở lưới Looper*; ở đó cũng đổi được thể loại).
+5. **Looper** (giống Looper của BandLab, không dùng gói loop tải về): chọn *Looper*, rồi chọn thể loại (Ballad, Pop, Hip-hop, Trap/808, Lo-fi, R&B, Rock, EDM, Jazz, Acoustic/Folk, Latin). Bạn được lưới pad 6 hàng — Kick, Snare, Hi-hat, Percussion, 808/Bass, Keyboard (vòng hợp âm 4 ô nhịp, đi theo *Tông* chọn ở góc trên) — mỗi hàng **4 pad**, mỗi pad là một nhịp lặp 1 ô do app tự sinh theo thể loại (nhịp chính, biến tấu, thưa, dày). Chạm pad Bass thì bass tự chạy; chạm thêm Snare thì snare tự nhập vào đúng nhịp đang chạy. Mỗi hàng chỉ một pad sáng; chạm pad khác trong hàng để đổi, chạm lại để tắt. Pad mới vào ở **đầu ô nhịp kế tiếp** nên luôn khớp. Bấm ● để ghi, bấm lần nữa thì phần bạn chơi thành clip trên track, sửa tiếp bằng Step Sequencer. Mở lại lưới từ hộp thoại track (*Mở lưới Looper*; ở đó cũng đổi được thể loại).
 6. Quay lại Studio, đặt BPM, bấm Phát. Chạm số ô nhịp trên thước để đổi vị trí phát; *Lặp* để lặp cả bài.
 
 Dự án tự lưu trên máy (JSON trong bộ nhớ riêng của ứng dụng). Có Undo / Redo.
@@ -52,7 +52,7 @@ Ngoài ra: cao độ 4 nhạc cụ giai điệu sai ≤ 2.4 cent; 32 voice cùng
 ## Chưa có
 
 - Âm sắc: pad Looper (kick, snare, hi-hat, percussion) dùng **mẫu âm thật CC0** từ Stargate Sample Pack (nguồn từng tệp: `app/src/main/assets/samples/SOURCES.md`, bản quyền: public domain, dùng thương mại được). Hàng Bass và các nhạc cụ khác (piano, guitar, bass, Drum Kit/Pad) vẫn là tổng hợp tạm, chưa có sampler SoundFont.
-- Looper: chưa chọn được tông (bass cố định quanh A), chưa có swing cho Jazz.
+- Looper: chưa có swing cho Jazz; hàng Keyboard dùng âm piano tổng hợp tạm.
 - Chưa thu giọng hát, chưa nối bộ lọc ồn vào micro, chưa có hiệu ứng (EQ, reverb), chưa xuất WAV/MP3.
 - Guitar chưa có chế độ chọn hợp âm / quạt dây; chưa có thư viện Pattern lưu dùng lại; chưa chỉnh vùng lặp bắt đầu/kết thúc tùy ý; chưa kéo-thả clip và kéo dài nốt.
 - Giao diện **chưa được chạy thử trên máy thật** (CI chỉ xác nhận biên dịch và test). Cần xem độ trễ, xrun và cảm giác chạm trên điện thoại.
