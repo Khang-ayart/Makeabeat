@@ -36,6 +36,9 @@ object AudioEngine {
     external fun noteOff(track: Int, note: Int)
     external fun allNotesOff()
 
+    /** Nạp mẫu âm thật vào ô [id] (mono float [-1,1]); mỗi ô chỉ nạp được một lần. Gọi được từ luồng nền. */
+    external fun loadSample(id: Int, data: FloatArray, sampleRate: Int): Boolean
+
     // ---- Looper: pad nhịp lặp ----
     /** Bật pad (>= 0) hoặc tắt hàng (-1). Có hiệu lực ở đầu ô nhịp kế tiếp. Trả false nếu hàng/pad sai. */
     external fun padLaunch(track: Int, row: Int, pad: Int): Boolean

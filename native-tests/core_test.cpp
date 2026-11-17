@@ -692,7 +692,7 @@ static std::array<int32_t, kPatchInts> P(float toneAmp, float fS, float fE, floa
                                          float drive) {
     auto q = [](float v) { return static_cast<int32_t>(std::lround(v * 1000.0f)); };
     return {q(toneAmp), q(fS),  q(fE),  q(pitchTau), q(toneTau), q(noiseAmp), q(noiseTau), q(hp), q(lp),
-            bursts * 1000, q(gap), q(tail), q(t2r),  q(t2a),  choke * 1000, q(gain), q(drive)};
+            bursts * 1000, q(gap), q(tail), q(t2r),  q(t2a),  choke * 1000, q(gain), q(drive), -1};
 }
 // decodeSong đọc chokeGroup trực tiếp (không nhân 1000); P() nhân để mọi trường cùng một quy ước, nên sửa lại ở đây.
 static std::array<int32_t, kPatchInts> PI(std::array<int32_t, kPatchInts> a) {
@@ -928,6 +928,80 @@ static void testPadRecordEventsAndInvalid() {
     CHECK(!core->popRecEvent(e), "events recorded while recording off");
 }
 
+
+// ---- Sampler: mẫu âm thật cho pad Looper -------------------------------------------------
+
+// Patch chỉ dùng mẫu số [id] (các phần tổng hợp để mặc định: nếu mẫu chưa nạp sẽ dùng tổng hợp thay thế).
+static std::array<int32_t, kPatchInts> samplePatch(int id, float gain = 1.0f) {
+    auto a = PI(P(0, 0, 0, 30, 200, 0.5f, 40, 1, 0, 0, 11, 90, 0, 0, 0, gain, 0));  // dự phòng: nhiễu ngắn
+    a[17] = id;
+    return a;
+}
+
+static std::vector<float> rampSample(int n) {  // 1.0 giảm dần về 0: dễ kiểm tra từng mẫu
+    std::vector<float> v(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) v[static_cast<size_t>(i)] = 0.8f * (1.0f - static_cast<float>(i) / n) * ((i % 2) ? -1.0f : 1.0f);
+    return v;
+}
+
+static void testSamplerPlaysAndEnds() {
+    begin("Sampler: mẫu phát từ khung hình đầu, đúng độ dài, voice tự tắt; nạp lần hai bị từ chối");
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    const auto smp = rampSample(4800);  // 0,1 s ở 48 kHz
+    CHECK(core->loadSample(0, smp.data(), 4800, 48000), "load failed");
+    CHECK(!core->loadSample(0, smp.data(), 4800, 48000), "slot overwritten");
+    CHECK(!core->loadSample(-1, smp.data(), 4800, 48000) && !core->loadSample(64, smp.data(), 4800, 48000), "bad id accepted");
+    CHECK(!core->loadSample(1, nullptr, 0, 48000), "null accepted");
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {{960, 240, 0, 127}}, Kit{samplePatch(0)})}));
+    core->play(0);
+    const auto out = renderAll(*core, 1, 48000, 480);
+    const auto on = findOnsets(out);
+    CHECK(on.size() == 1 && std::llabs(on[0] - 24000) <= 1, "onset %lld", on.empty() ? -1LL : static_cast<long long>(on[0]));
+    // Phần đuôi sau mẫu (0,1 s = 4800 khung) phải im lặng tuyệt đối.
+    CHECK(peak(out, 24000 + 4800 + 5, 10000) == 0.0f, "sample did not end (tail peak %f)", peak(out, 24000 + 4805, 10000));
+    CHECK(peak(out, 24000, 4800) > 0.3f, "sample too quiet");
+    renderAll(*core, 1, 4800, 480);
+    CHECK(core->activeVoiceCount() == 0, "voice still active after sample end");
+}
+
+static void testSamplerResamplesAndFallsBack() {
+    begin("Sampler: mẫu 24 kHz phát dài gấp đôi trên thiết bị 48 kHz; mẫu chưa nạp dùng tổng hợp thay thế");
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    const auto smp = rampSample(2400);  // 0,1 s ở 24 kHz => 4800 khung hình ở 48 kHz
+    core->loadSample(0, smp.data(), 2400, 24000);
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, Kit{samplePatch(0), samplePatch(7)})}));
+    renderAll(*core, 1, 64, 64);
+    core->noteOn(static_cast<int>(Inst::Looper), 0, 0, 127);
+    const auto a = renderAll(*core, 1, 9600, 480);
+    // Còn tín hiệu ở nửa sau (khung 3000-4700) nhưng im lặng sau 4800.
+    CHECK(peak(a, 3000, 1700) > 0.0f, "resampled sample ended too early");
+    CHECK(peak(a, 4900, 4000) == 0.0f, "resampled sample too long");
+    core->noteOn(static_cast<int>(Inst::Looper), 0, 1, 127);  // mẫu 7 chưa nạp
+    const auto b = renderAll(*core, 1, 2400, 480);
+    CHECK(peak(b, 0, b.size()) > 0.05f, "fallback synth silent");
+}
+
+static void testSamplerBitExactAndBounded() {
+    begin("Sampler: pad dùng mẫu lặp giống hệt từng bit, đầu ra trong [-1, 1] với gain lớn");
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    const auto smp = rampSample(9600);
+    core->loadSample(2, smp.data(), 9600, 44100);
+    Kit kit{samplePatch(2, 2.0f)};
+    auto pads = padSet({{0, {3840, {{0, 127, 0}, {1920, 90, 0}}}}});
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, kit, pads)}));
+    renderAll(*core, 1, 64, 64);
+    core->play(0);
+    core->padLaunch(0, 0, 0);
+    const auto out = renderAll(*core, 1, 96000 * 3, 480);
+    bool same = true, bounded = true;
+    for (size_t i = 0; i < 96000; ++i) {
+        if (out[96000 + i] != out[192000 + i]) same = false;
+        if (!(std::fabs(out[i]) <= 1.0f)) bounded = false;
+    }
+    CHECK(same, "sample loops differ");
+    CHECK(bounded, "exceeded [-1, 1]");
+}
+
 int main() {
     testExactBeatsAt120();
     testNoDriftAtOddTempo();
@@ -964,6 +1038,9 @@ int main() {
     testPadRowExclusiveSwitchAndStop();
     testPadRowsIndependentAndLengths();
     testPadRecordEventsAndInvalid();
+    testSamplerPlaysAndEnds();
+    testSamplerResamplesAndFallsBack();
+    testSamplerBitExactAndBounded();
 
     if (g_failures == 0) {
         std::printf("\nALL %d TESTS PASSED\n", g_tests);

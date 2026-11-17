@@ -22,7 +22,7 @@ Dự án tự lưu trên máy (JSON trong bộ nhớ riêng của ứng dụng).
 ```
 app/src/main/cpp/
   engine_core.*     Engine trung tâm: BPM, vị trí phát, lịch sự kiện theo tick, loop, mixer. KHÔNG phụ thuộc Android
-  voices.h          Tổng hợp tạm: harmonic, Karplus-Strong, trống, và pad Looper (tone + nhiễu + méo từ bộ thông số Patch). Về sau thay bằng sampler SoundFont
+  voices.h          Voice: phát mẫu âm thật (Looper) hoặc tổng hợp tạm: harmonic, Karplus-Strong, trống, và pad Looper (tone + nhiễu + méo từ bộ thông số Patch). Về sau thay bằng sampler SoundFont
   song.h            Dữ liệu bài nhạc bất biến, UI -> luồng âm thanh qua con trỏ nguyên tử
   noise_reducer.*   Lọc ồn ngoại tuyến (trừ phổ) cho bản thu giọng hát
   audio_engine.*    Nối engine với luồng Oboe (tự mở lại khi rút/cắm tai nghe)
@@ -31,7 +31,7 @@ app/src/main/java/com/bandstudio/app/
   model/            Project / Track / Clip / Note, Quantizer, mã hóa gửi engine (v2), lưu JSON, Sounds.kt (danh mục 39 âm + 11 thể loại)
   StudioViewModel   Trạng thái, Undo/Redo, ghi MIDI có bù độ trễ
   ui/               Home, Studio (timeline), Editor (Piano Roll, Drum Sequencer, Pad, phím)
-native-tests/core_test.cpp   35 bài kiểm thử lõi
+native-tests/core_test.cpp   38 bài kiểm thử lõi
 app/src/test/               Unit test Kotlin (Quantizer, mã hóa bài nhạc)
 ```
 
@@ -51,7 +51,7 @@ Ngoài ra: cao độ 4 nhạc cụ giai điệu sai ≤ 2.4 cent; 32 voice cùng
 
 ## Chưa có
 
-- Âm sắc hiện là tổng hợp tạm (nghe "điện tử"; brush, conga, tambourine kém thật nhất) nên chưa có sampler SoundFont/mẫu thật. Danh mục Looper chỉ là bộ số nên dễ chỉnh tai ở `Sounds.kt`.
+- Âm sắc: pad Looper (kick, snare, hi-hat, percussion) dùng **mẫu âm thật CC0** từ Stargate Sample Pack (nguồn từng tệp: `app/src/main/assets/samples/SOURCES.md`, bản quyền: public domain, dùng thương mại được). Hàng Bass và các nhạc cụ khác (piano, guitar, bass, Drum Kit/Pad) vẫn là tổng hợp tạm, chưa có sampler SoundFont.
 - Looper: chưa chọn được tông (bass cố định quanh A), chưa có swing cho Jazz.
 - Chưa thu giọng hát, chưa nối bộ lọc ồn vào micro, chưa có hiệu ứng (EQ, reverb), chưa xuất WAV/MP3.
 - Guitar chưa có chế độ chọn hợp âm / quạt dây; chưa có thư viện Pattern lưu dùng lại; chưa chỉnh vùng lặp bắt đầu/kết thúc tùy ý; chưa kéo-thả clip và kéo dài nốt.

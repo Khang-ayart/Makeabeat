@@ -81,6 +81,17 @@ JNIEXPORT void JNICALL JNI_FN(allNotesOff)(JNIEnv*, jobject) {
     if (gEngine) gEngine->core().allNotesOff();
 }
 
+// Nạp mẫu âm thật (mono float). Có thể gọi từ luồng nền: không dùng hàng đợi lệnh.
+JNIEXPORT jboolean JNICALL JNI_FN(loadSample)(JNIEnv* env, jobject, jint id, jfloatArray data, jint sampleRate) {
+    if (!gEngine || !data) return JNI_FALSE;
+    const jsize n = env->GetArrayLength(data);
+    jfloat* p = env->GetFloatArrayElements(data, nullptr);
+    if (!p) return JNI_FALSE;
+    const bool ok = gEngine->core().loadSample(id, p, static_cast<int>(n), sampleRate);
+    env->ReleaseFloatArrayElements(data, p, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
 // ---- Looper: pad nhịp lặp ----
 JNIEXPORT jboolean JNICALL JNI_FN(padLaunch)(JNIEnv*, jobject, jint track, jint row, jint pad) {
     return gEngine && gEngine->core().padLaunch(track, row, pad) ? JNI_TRUE : JNI_FALSE;

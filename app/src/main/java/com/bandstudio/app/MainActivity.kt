@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
 import com.bandstudio.app.audio.AudioEngine
+import com.bandstudio.app.audio.SampleBank
 import com.bandstudio.app.ui.BandStudioTheme
 import com.bandstudio.app.ui.EditorScreen
 import com.bandstudio.app.ui.HomeScreen
@@ -24,6 +25,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         volumeControlStream = AudioManager.STREAM_MUSIC // phím âm lượng điều khiển nhạc
         AudioEngine.create()
+        SampleBank.loadInto(applicationContext)
         setContent {
             BandStudioTheme {
                 AppRoot(viewModel)

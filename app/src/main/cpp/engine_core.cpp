@@ -64,6 +64,7 @@ Song* decodeSong(const int32_t* d, int n) {
             p.chokeGroup = d[i + 14];
             p.gain = f(d[i + 15]);
             p.drive = f(d[i + 16]);
+            p.sample = d[i + 17];
             td.kit.push_back(p);
         }
         const int padCount = d[i++];
@@ -107,6 +108,7 @@ EngineCore::EngineCore() {
 }
 
 EngineCore::~EngineCore() {
+    for (auto& s : samples_) delete s.load();
     delete current_;
     delete pending_.exchange(nullptr);
     Song* s = nullptr;
@@ -146,6 +148,20 @@ void EngineCore::setTrackMix(int track, float volume, float pan, bool mute, bool
     m.pan.store(pan, std::memory_order_relaxed);
     m.mute.store(mute, std::memory_order_relaxed);
     m.solo.store(solo, std::memory_order_relaxed);
+}
+
+bool EngineCore::loadSample(int id, const float* data, int count, int sampleRate) {
+    if (id < 0 || id >= kMaxSamples || !data || count < 2 || count > 48000 * 20 || sampleRate < 8000) return false;
+    auto* s = new Sample();
+    s->data.assign(data, data + count);
+    for (float& x : s->data) x = std::clamp(x, -1.0f, 1.0f);
+    s->sampleRate = sampleRate;
+    const Sample* expected = nullptr;
+    if (!samples_[id].compare_exchange_strong(expected, s, std::memory_order_acq_rel)) {
+        delete s;
+        return false;
+    }
+    return true;
 }
 
 void EngineCore::publishSong(Song* song) {
@@ -364,7 +380,8 @@ void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_
         }
         Voice* v = allocateVoice();
         if (!v) return;
-        v->startPatch(p, note, velocity, sampleRate_, ++voiceCounter_, seed);
+        const Sample* smp = (p.sample >= 0 && p.sample < kMaxSamples) ? samples_[p.sample].load(std::memory_order_acquire) : nullptr;
+        v->startPatch(p, smp, note, velocity, sampleRate_, ++voiceCounter_, seed);
         v->track = static_cast<uint8_t>(track);
         v->seq = seq;
         v->endTick = endTick;

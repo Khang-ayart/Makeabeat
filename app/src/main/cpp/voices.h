@@ -86,12 +86,16 @@ struct Voice {
     float t2Ratio = 0.0f, t2Amp = 0.0f;
     double phase2 = 0.0;
     int chokeGroup = 0;
+    // Mẫu âm thật (pad Looper): con trỏ chỉ đọc, đọc với nội suy tuyến tính theo tỉ lệ sample rate.
+    const float* smpData = nullptr;
+    int smpLen = 0;
+    double smpPos = 0.0, smpInc = 1.0;
 
     // seed: hạt giống nhiễu. Nốt do sequencer phát lấy từ (tick, track, nốt) nên mỗi vòng lặp giống hệt nhau từng bit.
     void start(Inst inst, int midiNote, int velocity, int sampleRate, uint64_t startOrder, uint64_t seed);
     // Pad Looper: phát một âm one-shot từ thông số Patch (tham số được kẹp về khoảng an toàn).
-    void startPatch(const Patch& p, int padIndex, int velocity, int sampleRate, uint64_t startOrder,
-                    uint64_t seed);
+    void startPatch(const Patch& p, const Sample* smp, int padIndex, int velocity, int sampleRate,
+                    uint64_t startOrder, uint64_t seed);
 
     void beginRelease(float coef) noexcept {
         if (!active || releasing) return;
@@ -190,7 +194,17 @@ private:
                 if (--burstsLeft == 0) d2 = tailDecay;
             }
         }
-        if (e1 < 1e-3f && e2 < 1e-3f && burstsLeft == 0) active = false;
+        if (smpData) {
+            const int i0 = static_cast<int>(smpPos);
+            if (i0 + 1 >= smpLen) {
+                smpData = nullptr;  // hết mẫu
+            } else {
+                const float fr = static_cast<float>(smpPos - i0);
+                out += smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr;
+                smpPos += smpInc;
+            }
+        }
+        if (e1 < 1e-3f && e2 < 1e-3f && burstsLeft == 0 && !smpData) active = false;
         if (drive > 0.0f) {  // méo mềm (808 rè); đầu ra bị chặn trong [-0.8, 0.8]
             const float xd = std::clamp(out * (1.0f + drive), -1.0f, 1.0f);
             out = (1.5f * xd - 0.5f * xd * xd * xd) * 0.8f;
@@ -220,6 +234,7 @@ inline void Voice::start(Inst inst, int midiNote, int velocity, int sampleRate, 
     lpState = 0.0f;
     t2Amp = t2Ratio = 0.0f;
     chokeGroup = 0;
+    smpData = nullptr;
 
     if (inst == Inst::Piano || inst == Inst::Bass) {
         kind = Kind::Harmonic;
@@ -335,8 +350,8 @@ inline void Voice::start(Inst inst, int midiNote, int velocity, int sampleRate, 
     }
 }
 
-inline void Voice::startPatch(const Patch& p, int padIndex, int velocity, int sampleRate, uint64_t startOrder,
-                              uint64_t seed) {
+inline void Voice::startPatch(const Patch& p, const Sample* smp, int padIndex, int velocity, int sampleRate,
+                              uint64_t startOrder, uint64_t seed) {
     const double sr = sampleRate;
     const float vel = static_cast<float>(std::clamp(velocity, 1, 127)) / 127.0f;
     auto dec = [&](double ms) {
@@ -385,6 +400,17 @@ inline void Voice::startPatch(const Patch& p, int padIndex, int velocity, int sa
     tailDecay = dec(p.tailTauMs);
     age = 0;
     rng.s = static_cast<uint32_t>(seed * 2246822519u) | 1u;
+    smpData = nullptr;
+    if (smp && smp->data.size() >= 2 && smp->sampleRate > 0) {  // có mẫu thật: thay cho phần tổng hợp
+        smpData = smp->data.data();
+        smpLen = static_cast<int>(smp->data.size());
+        smpPos = 0.0;
+        smpInc = static_cast<double>(smp->sampleRate) / sr;
+        toneAmp = noiseAmp = 0.0f;
+        e1 = e2 = 0.0f;
+        t2Amp = 0.0f;
+        burstsLeft = 0;
+    }
 }
 
 }  // namespace band

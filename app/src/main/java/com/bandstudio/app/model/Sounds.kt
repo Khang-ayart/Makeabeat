@@ -38,6 +38,7 @@ data class Patch(
     val chokeGroup: Int = 0,
     val gain: Float = 1f,
     val drive: Float = 0f,
+    val sample: Int = -1,           // >= 0: ô mẫu âm thật trong engine (nếu nạp được); không thì dùng phần tổng hợp
 ) {
     /** Thứ tự phải khớp decodeSong: số thực nhân 1000; bursts và chokeGroup là số nguyên thô. */
     fun encodeTo(out: MutableList<Int>) {
@@ -45,7 +46,7 @@ data class Patch(
         out.add(q(toneAmp)); out.add(q(fStart)); out.add(q(fEnd)); out.add(q(pitchTauMs)); out.add(q(toneTauMs))
         out.add(q(noiseAmp)); out.add(q(noiseTauMs)); out.add(q(noiseHP)); out.add(q(noiseLP))
         out.add(bursts); out.add(q(burstGapMs)); out.add(q(tailTauMs)); out.add(q(tone2Ratio)); out.add(q(tone2Amp))
-        out.add(chokeGroup); out.add(q(gain)); out.add(q(drive))
+        out.add(chokeGroup); out.add(q(gain)); out.add(q(drive)); out.add(sample)
     }
 
     fun transposed(semitones: Int): Patch {
@@ -55,7 +56,7 @@ data class Patch(
     }
 
     companion object {
-        const val INTS = 17  // khớp kPatchInts
+        const val INTS = 18  // khớp kPatchInts
         val SILENT = Patch()
     }
 }
@@ -103,7 +104,7 @@ object Catalog {
     // Snare: tone thân + nhiễu "dây" (lọc cao) với độ vang khác nhau. Clap = nhiều tiếng vỗ nối nhau.
     private val snares = listOf(
         s("snare.soft", "Mềm", SoundCat.SNARE, Patch(0.35f, 190f, 170f, 20f, 60f, 0.4f, 110f, 0.6f, 0.3f)),
-        s("snare.brush", "Chổi (brush)", SoundCat.SNARE, Patch(0.1f, 180f, 170f, 20f, 40f, 0.45f, 130f, 0.5f, 0.55f)),
+        s("snare.brush", "Tape khô", SoundCat.SNARE, Patch(0.1f, 180f, 170f, 20f, 40f, 0.45f, 130f, 0.5f, 0.55f)),
         s("snare.rim", "Gõ viền (rim)", SoundCat.SNARE,
             Patch(0.7f, 450f, 400f, 10f, 25f, 0.25f, 25f, 0.8f, tone2Ratio = 1.6f, tone2Amp = 0.5f)),
         s("snare.pop", "Pop", SoundCat.SNARE, Patch(0.5f, 200f, 180f, 20f, 80f, 0.6f, 120f, 0.7f)),
@@ -120,7 +121,7 @@ object Catalog {
         s("hat.closed", "Đóng", SoundCat.HAT, Patch(noiseAmp = 0.35f, noiseTauMs = 45f, noiseHP = 1f, chokeGroup = 1)),
         s("hat.open", "Mở", SoundCat.HAT, Patch(noiseAmp = 0.32f, noiseTauMs = 300f, noiseHP = 1f, chokeGroup = 1)),
         s("hat.trap", "Trap tick", SoundCat.HAT, Patch(noiseAmp = 0.3f, noiseTauMs = 14f, noiseHP = 1f)),
-        s("hat.shaker", "Shaker", SoundCat.HAT, Patch(noiseAmp = 0.3f, noiseTauMs = 70f, noiseHP = 0.7f, noiseLP = 0.5f)),
+        s("hat.shaker", "Khô", SoundCat.HAT, Patch(noiseAmp = 0.3f, noiseTauMs = 70f, noiseHP = 0.7f, noiseLP = 0.5f)),
         s("hat.lofi", "Lo-fi", SoundCat.HAT, Patch(noiseAmp = 0.3f, noiseTauMs = 50f, noiseHP = 0.8f, noiseLP = 0.6f)),
     )
 
@@ -128,7 +129,7 @@ object Catalog {
         s("perc.shaker", "Shaker", SoundCat.PERC, Patch(noiseAmp = 0.3f, noiseTauMs = 55f, noiseHP = 0.6f, noiseLP = 0.5f)),
         s("perc.tamb", "Tambourine", SoundCat.PERC,
             Patch(noiseAmp = 0.35f, noiseTauMs = 80f, noiseHP = 1f, noiseLP = 0.2f, bursts = 2, burstGapMs = 9f, tailTauMs = 70f)),
-        s("perc.snap", "Búng tay", SoundCat.PERC, Patch(0.3f, 1800f, 1200f, 10f, 20f, 0.5f, 25f, 1f, 0.2f)),
+        s("perc.snap", "Clap ngắn", SoundCat.PERC, Patch(0.3f, 1800f, 1200f, 10f, 20f, 0.5f, 25f, 1f, 0.2f)),
         s("perc.conga", "Conga", SoundCat.PERC, Patch(0.8f, 330f, 250f, 25f, 90f, 0.08f, 5f, 0.5f)),
         s("perc.bongo", "Bongo", SoundCat.PERC, Patch(0.8f, 480f, 380f, 20f, 60f, 0.08f, 5f, 0.5f)),
         s("perc.cowbell", "Cowbell", SoundCat.PERC, Patch(0.6f, 560f, 560f, 30f, 120f, tone2Ratio = 1.48f, tone2Amp = 0.8f)),
@@ -149,7 +150,17 @@ object Catalog {
         s("bass.synth", "Synth bass", SoundCat.BASS, Patch(0.8f, E1, E1, 30f, 350f, tone2Ratio = 2f, tone2Amp = 0.8f, drive = 1.2f)),
     )
 
-    val sounds: List<Sound> = kicks + snares + hats + percs + basses
+    /**
+     * Mẫu âm thật (CC0, xem assets/samples/SOURCES.md): mọi âm ngoài hàng Bass có tệp assets/samples/<id>.wav.
+     * Thông số tổng hợp ở trên vẫn giữ làm dự phòng khi mẫu chưa nạp được. Ô mẫu = vị trí trong [sampleIds].
+     */
+    private val allSounds: List<Sound> = kicks + snares + hats + percs + basses
+    val sampleIds: List<String> = allSounds.filter { it.cat != SoundCat.BASS }.map { it.id }
+    private val sampleGain = mapOf(SoundCat.KICK to 0.9f, SoundCat.SNARE to 0.85f, SoundCat.HAT to 0.7f, SoundCat.PERC to 0.8f)
+    val sounds: List<Sound> = allSounds.map { snd ->
+        val slot = sampleIds.indexOf(snd.id)
+        if (slot < 0) snd else Sound(snd.id, snd.label, snd.cat, snd.patch.copy(sample = slot, gain = sampleGain.getValue(snd.cat)))
+    }
     private val byId: Map<String, Sound> = sounds.associateBy { it.id }
 
     fun sound(id: String): Sound? = byId[id]

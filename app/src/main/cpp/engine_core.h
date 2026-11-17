@@ -47,6 +47,9 @@ public:
     bool allNotesOff() noexcept;
     // Bật pad (pad >= 0) hoặc tắt hàng (pad = -1). Có hiệu lực ở đầu chu kỳ kế tiếp (quantize), mỗi hàng chỉ một pad.
     bool padLaunch(int track, int row, int pad) noexcept;
+    // Nạp mẫu âm thật vào ô [id] (mono float). Chỉ ghi được một lần cho mỗi ô (mẫu không bao giờ bị thay khi đang
+    // được phát). Có thể gọi từ luồng nạp riêng, không dùng hàng đợi lệnh. Trả false nếu ô đã có / tham số sai.
+    bool loadSample(int id, const float* data, int count, int sampleRate);
     // Bật cờ ghi: engine báo mỗi cú đánh do nhịp pad phát ra để UI ghi thành nốt.
     void setRecording(bool on) noexcept { recording_.store(on, std::memory_order_relaxed); }
     // Lấy một sự kiện ghi: out = {tick, track, kitIdx, vel}. false nếu hết.
@@ -129,6 +132,8 @@ private:
     float targetL_[kMaxTracks] = {}, targetR_[kMaxTracks] = {};
     float curL_[kMaxTracks] = {}, curR_[kMaxTracks] = {};
     bool gainsInit_ = false;
+
+    std::atomic<const Sample*> samples_[kMaxSamples] = {};
 
     Voice voices_[kMaxVoices];
     uint64_t voiceCounter_ = 0;

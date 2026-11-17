@@ -217,4 +217,44 @@ class ModelTest {
             assertEquals("${g.family}/$row: 4 mẫu phải khác nhau", PADS_PER_ROW, set.size)
         }
     }
+
+    // ---- Mẫu âm thật ----
+
+    @Test
+    fun everyNonBassSoundHasAValidSampleFile() {
+        assertEquals(Catalog.sampleIds.size, Catalog.sampleIds.toSet().size)
+        for (snd in Catalog.sounds) {
+            if (snd.cat == SoundCat.BASS) {
+                assertEquals("${snd.id}: bass dùng tổng hợp", -1, snd.patch.sample)
+                continue
+            }
+            assertEquals(Catalog.sampleIds.indexOf(snd.id), snd.patch.sample)
+            val f = java.io.File("src/main/assets/samples/${snd.id}.wav") // thư mục chạy test là app/
+            assertTrue("thiếu ${f.path}", f.exists())
+            val wav = com.bandstudio.app.model.Wav.parse(f.readBytes())
+            assertTrue("${snd.id}: không đọc được WAV", wav != null)
+            wav!!
+            assertEquals(44100, wav.sampleRate)
+            assertTrue("${snd.id}: quá ngắn/dài (${wav.samples.size})", wav.samples.size in 400..(44100 * 2))
+            val peak = wav.samples.maxOf { kotlin.math.abs(it) }
+            assertTrue("${snd.id}: biên độ $peak", peak in 0.3f..1.0f)
+            assertTrue("${snd.id}: không bắt đầu ngay (${wav.samples[0]})", kotlin.math.abs(wav.samples[0]) < 0.5f)
+        }
+    }
+
+    @Test
+    fun sampleSlotIsEncodedAsLastPatchInt() {
+        val out = ArrayList<Int>()
+        Patch(sample = 5, bursts = 2, chokeGroup = 1).encodeTo(out)
+        assertEquals(Patch.INTS, out.size)
+        assertEquals(5, out.last())
+        assertEquals(2, out[9])   // bursts (số nguyên thô)
+        assertEquals(1, out[14])  // chokeGroup (số nguyên thô)
+    }
+
+    @Test
+    fun wavParserRejectsGarbage() {
+        assertEquals(null, com.bandstudio.app.model.Wav.parse(ByteArray(10)))
+        assertEquals(null, com.bandstudio.app.model.Wav.parse(ByteArray(100) { 7 }))
+    }
 }
