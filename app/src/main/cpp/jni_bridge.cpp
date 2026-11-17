@@ -81,6 +81,10 @@ JNIEXPORT void JNICALL JNI_FN(allNotesOff)(JNIEnv*, jobject) {
     if (gEngine) gEngine->core().allNotesOff();
 }
 
+JNIEXPORT void JNICALL JNI_FN(setMasterFx)(JNIEnv*, jobject, jboolean on, jfloat wet) {
+    if (gEngine) gEngine->core().setMasterFx(on == JNI_TRUE, wet);
+}
+
 // Nạp mẫu âm thật (mono float). Có thể gọi từ luồng nền: không dùng hàng đợi lệnh.
 JNIEXPORT jboolean JNICALL JNI_FN(loadSample)(JNIEnv* env, jobject, jint id, jfloatArray data, jint sampleRate) {
     if (!gEngine || !data) return JNI_FALSE;

@@ -99,7 +99,7 @@ object Patterns {
         val row = pad / PADS_PER_ROW
         val out = ArrayList<Hit>()
         p.forEachIndexed { step, ch ->
-            val vel = when (ch) {
+            var vel = when (ch) {
                 'X' -> 124
                 'x' -> 100
                 'g' -> 58
@@ -107,6 +107,8 @@ object Patterns {
                 else -> 0
             }
             if (vel == 0) return@forEachIndexed
+            // Hi-hat: nhấn mạnh theo phách (người chơi thật không đánh đều tăm tắp) -> nhịp có "nhấp nhô".
+            if (row == SoundCat.HAT.ordinal && ch == 'x') vel = when { step % 4 == 0 -> 108; step % 2 == 0 -> 94; else -> 80 }
             // Hàng Bass: chữ số chọn một trong 4 nốt; các hàng khác: pad dùng đúng âm của mình.
             val kitIdx = if (row == SoundCat.BASS.ordinal) row * PADS_PER_ROW + (ch - '0').coerceIn(0, 3) else pad
             out.add(Hit(step * STEP_TICKS, vel, kitIdx, STEP_TICKS))
@@ -192,5 +194,23 @@ object Patterns {
 
     /** Tất cả cú đánh của một pad (trống/bass/hợp âm) để gửi engine. */
     fun padHits(genre: Genre, key: Int, pad: Int): List<Hit> =
-        if (isKeyPad(pad)) keyHits(genre.family, pad, key, genre.minor) else hits(genre.family, pad)
+        if (isKeyPad(pad)) keyHits(genre.family, pad, key, genre.minor) else swung(hits(genre.family, pad), swingOf(genre.id))
+
+    /** Độ swing (0..0,5) theo thể loại: phần của một bước 1/16 mà nốt lẻ bị trễ. 0 = thẳng hàng. */
+    fun swingOf(genreId: String): Float = when (genreId) {
+        "jazz" -> 0.33f
+        "lofi" -> 0.28f
+        "rnb" -> 0.20f
+        "hiphop" -> 0.12f
+        else -> 0f
+    }
+
+    /** Trễ các nốt nằm trên bước 1/16 lẻ (chỗ "và" của nửa phách) để nhịp có độ lắc. Vòng lặp vẫn khớp từng bit. */
+    fun swung(hits: List<Hit>, swing: Float): List<Hit> {
+        if (swing <= 0f) return hits
+        val shift = (STEP_TICKS * swing).toInt()
+        return hits.map { h ->
+            if (h.tick % (2 * STEP_TICKS) == STEP_TICKS) h.copy(tick = minOf(h.tick + shift, LEN_TICKS - 1)) else h
+        }
+    }
 }

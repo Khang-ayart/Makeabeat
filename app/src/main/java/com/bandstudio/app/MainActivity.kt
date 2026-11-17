@@ -26,6 +26,7 @@ class MainActivity : ComponentActivity() {
         volumeControlStream = AudioManager.STREAM_MUSIC // phím âm lượng điều khiển nhạc
         AudioEngine.create()
         SampleBank.loadInto(applicationContext)
+        AudioEngine.setMasterFx(true, 0.22f) // reverb phòng nhỏ + nén chung cho cả bài
         setContent {
             BandStudioTheme {
                 AppRoot(viewModel)

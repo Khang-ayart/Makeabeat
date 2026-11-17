@@ -132,6 +132,7 @@ void EngineCore::prepare(int sampleRate, int channelCount) {
     releaseCoef_ = static_cast<float>(std::exp(-1.0 / (0.12 * sampleRate_)));
     chokeCoef_ = static_cast<float>(std::exp(-1.0 / (0.012 * sampleRate_)));
     for (auto& v : voices_) v.active = false;
+    fx_.prepare(sampleRate_);
     clearPads();
     click_ = Click{};
     gainsInit_ = false;
@@ -504,6 +505,8 @@ void EngineCore::render(float* out, int numFrames) noexcept {
         beatsPerFrame_ = static_cast<double>(bpm) / (60.0 * sampleRate_);
     }
     const bool metronome = metronome_.load(std::memory_order_relaxed);
+    const bool fxOn = fxOn_.load(std::memory_order_relaxed);
+    const float fxWet = fxWet_.load(std::memory_order_relaxed);
 
     bool anySolo = false;
     for (const auto& m : mix_) anySolo = anySolo || m.solo.load(std::memory_order_relaxed);
@@ -548,6 +551,7 @@ void EngineCore::render(float* out, int numFrames) noexcept {
             left += c;
             right += c;
         }
+        if (fxOn) fx_.process(left, right, fxWet);
         left = softClip(left * kMasterGain);
         right = softClip(right * kMasterGain);
 

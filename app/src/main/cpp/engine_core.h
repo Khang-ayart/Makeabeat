@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 
+#include "master_fx.h"
 #include "song.h"
 #include "spsc_queue.h"
 #include "voices.h"
@@ -38,6 +39,11 @@ public:
     // ---- Luồng UI (đúng MỘT luồng gọi) ----
     void setBpm(float bpm) noexcept;
     void setMetronomeEnabled(bool enabled) noexcept;
+    // Bật reverb + nén trên bus master (mặc định tắt: âm thanh thô, dùng cho test). wet 0..1.
+    void setMasterFx(bool on, float wet) noexcept {
+        fxWet_.store(std::clamp(wet, 0.0f, 1.0f), std::memory_order_relaxed);
+        fxOn_.store(on, std::memory_order_relaxed);
+    }
     void setTrackMix(int track, float volume, float pan, bool mute, bool solo) noexcept;
     void publishSong(Song* song);  // nhận quyền sở hữu
     bool play(int fromTick) noexcept;
@@ -98,6 +104,9 @@ private:
 
     std::atomic<float> bpm_{120.0f};
     std::atomic<bool> metronome_{true};
+    std::atomic<bool> fxOn_{false};
+    std::atomic<float> fxWet_{0.0f};
+    MasterFx fx_;
     TrackMix mix_[kMaxTracks];
     std::atomic<double> beatPosPublished_{0.0};
     std::atomic<bool> playingPublished_{false};

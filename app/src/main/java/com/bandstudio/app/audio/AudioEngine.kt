@@ -37,6 +37,7 @@ object AudioEngine {
     external fun allNotesOff()
 
     /** Nạp mẫu âm thật vào ô [id] (mono float [-1,1]); mỗi ô chỉ nạp được một lần. Gọi được từ luồng nền. */
+    external fun setMasterFx(on: Boolean, wet: Float)
     external fun loadSample(id: Int, data: FloatArray, sampleRate: Int): Boolean
 
     // ---- Looper: pad nhịp lặp ----

@@ -247,6 +247,20 @@ class ModelTest {
         assertTrue(g.kit(3) != g.kit(4))
     }
 
+    @Test
+    fun swingDelaysOnlyOffbeatSixteenthsAndKeepsLoopLength() {
+        val jazz = Catalog.genre("jazz")!!
+        val straight = Patterns.hits(jazz.family, 8)   // hàng hi-hat
+        val swung = Patterns.padHits(jazz, com.bandstudio.app.model.DEFAULT_KEY, 8)
+        assertEquals(straight.size, swung.size)
+        straight.zip(swung).forEach { (a, b) ->
+            if (a.tick % 480 == 240) assertTrue(b.tick > a.tick && b.tick < Patterns.LEN_TICKS) else assertEquals(a.tick, b.tick)
+        }
+        // Thể loại không swing giữ nguyên.
+        val pop = Catalog.genre("pop")!!
+        assertEquals(Patterns.hits(pop.family, 8), Patterns.padHits(pop, com.bandstudio.app.model.DEFAULT_KEY, 8))
+    }
+
     // ---- Mẫu âm thật ----
 
     @Test

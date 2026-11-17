@@ -1006,6 +1006,52 @@ static void testSamplerBitExactAndBounded() {
 
 // ---- Looper: hàng Keyboard (nốt có cao độ, pad dài nhiều ô nhịp) ----------------------------
 
+static void testMasterFx() {
+    begin("Bus master: reverb có đuôi rồi tắt hẳn, nén hạ đỉnh nốt to, đầu ra trong [-1, 1], tắt fx thì giữ nguyên");
+    auto run = [&](bool fx, int note, int vel, int frames) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        core->setMasterFx(fx, 0.3f);
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Piano, {})}));
+        renderAll(*core, 1, 64, 64);
+        core->noteOn(static_cast<int>(Inst::Piano), 0, note, vel);
+        auto a = renderAll(*core, 1, 4800, 480);
+        core->noteOff(0, note);
+        auto b = renderAll(*core, 1, frames, 480);
+        a.insert(a.end(), b.begin(), b.end());
+        return a;
+    };
+    const auto dry = run(false, 60, 100, 96000);
+    const auto wet = run(true, 60, 100, 96000);
+    // Phần reverb = chênh lệch giữa bản có fx và không fx. Không fx: nốt tắt hẳn rồi im lặng.
+    CHECK(peak(dry, 4800 + 60000, 20000) == 0.0f, "dry tail not silent");
+    auto diffPeak = [&](size_t from, size_t count) {
+        float m = 0.0f;
+        for (size_t i = from; i < from + count && i < wet.size(); ++i) m = std::max(m, std::fabs(wet[i] - dry[i]));
+        return m;
+    };
+    const float tail = diffPeak(4800 + 12000, 18000);
+    CHECK(tail > 0.004f, "no reverb tail (%f)", tail);
+    CHECK(diffPeak(4800 + 88000, 3000) < 0.05f * tail + 1e-5f, "reverb tail does not decay (%f vs %f)", diffPeak(4800 + 88000, 3000), tail);
+    // Nén: nốt to + nhiều voice bị hạ so với không nén.
+    auto loud = [&](bool fx) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        core->setMasterFx(fx, 0.0f);
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Bass, {})}));
+        renderAll(*core, 1, 64, 64);
+        for (int n = 36; n < 48; ++n) core->noteOn(static_cast<int>(Inst::Bass), 0, n, 127);
+        return renderAll(*core, 1, 24000, 480);
+    };
+    const auto l0 = loud(false), l1 = loud(true);
+    CHECK(peak(l1, 2000, 20000) < peak(l0, 2000, 20000), "compressor did not reduce peak (%f vs %f)", peak(l1, 2000, 20000), peak(l0, 2000, 20000));
+    bool bounded = true;
+    for (float x : l1) if (!(x >= -1.0f && x <= 1.0f)) bounded = false;
+    for (float x : wet) if (!(x >= -1.0f && x <= 1.0f)) bounded = false;
+    CHECK(bounded, "output out of range or NaN");
+    // Bật rồi tắt fx: kết quả tắt giống hệt lần chưa từng bật (tắt thì bỏ qua hoàn toàn).
+    auto off1 = run(false, 64, 90, 4800), off2 = run(false, 64, 90, 4800);
+    CHECK(off1 == off2, "fx-off output not deterministic");
+}
+
 static void testKeyboardPadPitchAndRelease() {
     begin("Keyboard: pad 4 ô nhịp phát đúng nốt (cao độ < 10 cent), đúng thời điểm, nhả đúng độ dài");
     const int len = 4 * 3840;
@@ -1085,6 +1131,7 @@ int main() {
     testSamplerPlaysAndEnds();
     testSamplerResamplesAndFallsBack();
     testSamplerBitExactAndBounded();
+    testMasterFx();
     testKeyboardPadPitchAndRelease();
     testKeyboardNotesInClip();
 
