@@ -17,6 +17,7 @@ import com.bandstudio.app.model.MAX_BARS
 import com.bandstudio.app.model.MAX_CLIP_BARS
 import com.bandstudio.app.model.MAX_TRACKS
 import com.bandstudio.app.model.PADS_PER_ROW
+import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.DEFAULT_KEY
 import com.bandstudio.app.model.PAD_COUNT
 import com.bandstudio.app.model.NoteEvent
