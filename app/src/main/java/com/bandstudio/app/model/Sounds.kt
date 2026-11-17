@@ -156,7 +156,7 @@ object Catalog {
      */
     private val allSounds: List<Sound> = kicks + snares + hats + percs + basses
     val sampleIds: List<String> = allSounds.filter { it.cat != SoundCat.BASS }.map { it.id }
-    private val sampleGain = mapOf(SoundCat.KICK to 0.9f, SoundCat.SNARE to 0.85f, SoundCat.HAT to 0.7f, SoundCat.PERC to 0.8f)
+    private val sampleGain = mapOf(SoundCat.KICK to 1f, SoundCat.SNARE to 1f, SoundCat.HAT to 1f, SoundCat.PERC to 1f) // độ to đã cân sẵn trong mẫu
     val sounds: List<Sound> = allSounds.map { snd ->
         val slot = sampleIds.indexOf(snd.id)
         if (slot < 0) snd else Sound(snd.id, snd.label, snd.cat, snd.patch.copy(sample = slot, gain = sampleGain.getValue(snd.cat)))
