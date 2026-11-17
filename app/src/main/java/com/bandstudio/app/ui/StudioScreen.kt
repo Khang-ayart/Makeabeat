@@ -62,7 +62,7 @@ import com.bandstudio.app.model.Instrument
 import com.bandstudio.app.model.MAX_BARS
 import com.bandstudio.app.model.MAX_CLIP_BARS
 import com.bandstudio.app.model.MAX_TRACKS
-import com.bandstudio.app.model.PAD_COUNT
+import com.bandstudio.app.model.KIT_COUNT
 import com.bandstudio.app.model.Project
 import com.bandstudio.app.model.Track
 import kotlin.math.roundToInt
@@ -320,13 +320,14 @@ private fun MiniNotes(clip: Clip, inst: Instrument, color: Color) {
         val hi: Int
         if (inst.oneShot) {
             lo = 0
-            hi = (if (inst.isLooper) PAD_COUNT else DRUM_NAMES.size) - 1
+            hi = (if (inst.isLooper) KIT_COUNT else DRUM_NAMES.size) - 1
         } else {
             lo = clip.notes.minOf { it.pitch }
             hi = maxOf(clip.notes.maxOf { it.pitch }, lo + 7)
         }
         val rowH = size.height / (hi - lo + 1)
         for (n in clip.notes) {
+            if (inst.oneShot && n.pitch > hi) continue // nốt keyboard (>=128) không có hàng riêng trong bản xem nhanh
             val x = n.start / len * size.width
             val w = maxOf(2f, n.dur / len * size.width)
             val y = (hi - n.pitch) * rowH

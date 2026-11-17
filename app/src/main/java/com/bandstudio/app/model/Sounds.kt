@@ -10,11 +10,13 @@ enum class SoundCat(val label: String, val color: Long) {
     HAT("Hi-hat", 0xFF2FBF8F),
     PERC("Percussion", 0xFF5B8CFF),
     BASS("808 / Bass", 0xFF9B6BFF),
+    KEYS("Keyboard", 0xFFE0568F),  // vòng hợp âm: không có trong kit, nốt nằm ngay trong nhịp của pad
 }
 
 /** Mỗi hàng có 4 pad (4 lựa chọn). Pad số i của track Looper = hàng i / 4, cột i % 4. */
 const val PADS_PER_ROW = 4
-val PAD_COUNT = SoundCat.entries.size * PADS_PER_ROW  // 20, nhỏ hơn kMaxKit = 32 của engine
+val PAD_COUNT = SoundCat.entries.size * PADS_PER_ROW                 // 24 pad (6 hàng x 4)
+val KIT_COUNT = (SoundCat.entries.size - 1) * PADS_PER_ROW           // 20 âm trong kit (hàng Keyboard không cần âm riêng)
 
 /**
  * Thông số một âm one-shot, khớp struct Patch trong song.h. Engine ghép: tone (sin trượt cao độ)
@@ -73,15 +75,24 @@ class Genre(
     val family: String,                // họ nhịp trong Patterns
     private val picks: Map<SoundCat, List<String>>,
     private val bassSound: String,
-    private val bassRoot: Int,           // nửa cung trên E1
+    val minor: Boolean,                  // thang thứ hay trưởng: quyết định hợp âm và quãng của bass
     private val bassIntervals: List<Int>,
 ) {
-    /** 20 pad theo thứ tự hàng KICK, SNARE, HAT, PERC, BASS (mỗi hàng 4 pad). */
-    fun kit(): List<PadSpec> = SoundCat.entries.flatMap { cat ->
-        if (cat == SoundCat.BASS) bassIntervals.map { PadSpec(bassSound, bassRoot + it) }
-        else picks.getValue(cat).map { PadSpec(it) }
+    /**
+     * 20 âm theo thứ tự hàng KICK, SNARE, HAT, PERC, BASS (mỗi hàng 4). Bass nằm trong tông [keyRoot] (0 = C ... 11 = B),
+     * gốc ở khoảng E1-D#2 (41-78 Hz) để loa điện thoại còn nghe được.
+     */
+    fun kit(keyRoot: Int = DEFAULT_KEY): List<PadSpec> {
+        val root = Math.floorMod(keyRoot - 4, 12)  // nửa cung trên E1 (E = nốt số 4 của C = 0)
+        return SoundCat.entries.filter { it != SoundCat.KEYS }.flatMap { cat ->
+            if (cat == SoundCat.BASS) bassIntervals.map { PadSpec(bassSound, root + it) }
+            else picks.getValue(cat).map { PadSpec(it) }
+        }
     }
 }
+
+const val DEFAULT_KEY = 9  // A: giữ nguyên bass cũ (A1) cho các dự án có sẵn
+val KEY_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 object Catalog {
     private const val E1 = 41.2f  // gốc của các âm bass; PadSpec.semitones dịch lên từ đây
@@ -177,11 +188,11 @@ object Catalog {
     private fun g(
         id: String, label: String, bpm: Int, family: String,
         kick: List<String>, snare: List<String>, hat: List<String>, perc: List<String>,
-        bass: String, root: Int, intervals: List<Int>,
+        bass: String, minor: Boolean, intervals: List<Int>,
     ) = Genre(
         id, label, bpm, family,
         mapOf(SoundCat.KICK to kick, SoundCat.SNARE to snare, SoundCat.HAT to hat, SoundCat.PERC to perc),
-        bass, root, intervals,
+        bass, minor, intervals,
     )
 
     val genres: List<Genre> = listOf(
@@ -190,67 +201,67 @@ object Catalog {
             listOf("snare.soft", "snare.brush", "snare.rim", "snare.pop"),
             listOf("hat.soft", "hat.closed", "hat.open", "hat.shaker"),
             listOf("perc.tamb", "perc.tom", "perc.ride", "perc.crash"),
-            "bass.sub", 5, listOf(0, 4, 5, 7)),
+            "bass.sub", false, listOf(0, 4, 5, 7)),
         g("pop", "Pop", 110, "pop",
             listOf("kick.punch", "kick.tight", "kick.soft", "kick.edm"),
             listOf("snare.pop", "snare.crack", "snare.clap", "snare.rim"),
             listOf("hat.closed", "hat.open", "hat.tight", "hat.shaker"),
             listOf("perc.tamb", "perc.snap", "perc.shaker", "perc.crash"),
-            "bass.pluck", 5, listOf(0, 5, 7, 9)),
+            "bass.pluck", false, listOf(0, 5, 7, 9)),
         g("hiphop", "Hip-hop", 90, "boombap",
             listOf("kick.deep", "kick.punch", "kick.lofi", "kick.boom"),
             listOf("snare.crack", "snare.pop", "snare.lofi", "snare.rim"),
             listOf("hat.closed", "hat.open", "hat.lofi", "hat.tight"),
             listOf("perc.snap", "perc.cowbell", "perc.tom", "perc.crash"),
-            "bass.808long", 5, listOf(0, 3, 5, 7)),
+            "bass.808long", true, listOf(0, 3, 5, 7)),
         g("trap", "Trap / 808", 140, "trap",
             listOf("kick.boom", "kick.deep", "kick.punch", "kick.tight"),
             listOf("snare.trap", "snare.clap", "snare.crack", "snare.rim"),
             listOf("hat.trap", "hat.closed", "hat.open", "hat.tight"),
             listOf("perc.snap", "perc.cowbell", "perc.tom", "perc.crash"),
-            "bass.808dist", 5, listOf(0, 3, 7, 10)),
+            "bass.808dist", true, listOf(0, 3, 7, 10)),
         g("lofi", "Lo-fi", 78, "boombap",
             listOf("kick.lofi", "kick.soft", "kick.deep", "kick.tight"),
             listOf("snare.lofi", "snare.soft", "snare.brush", "snare.rim"),
             listOf("hat.lofi", "hat.soft", "hat.closed", "hat.shaker"),
             listOf("perc.snap", "perc.shaker", "perc.tamb", "perc.clave"),
-            "bass.sub", 5, listOf(0, 3, 7, 10)),
+            "bass.sub", true, listOf(0, 3, 7, 10)),
         g("rnb", "R&B", 85, "slow",
             listOf("kick.soft", "kick.deep", "kick.tight", "kick.punch"),
             listOf("snare.clap", "snare.soft", "snare.pop", "snare.rim"),
             listOf("hat.soft", "hat.closed", "hat.open", "hat.tight"),
             listOf("perc.snap", "perc.tamb", "perc.shaker", "perc.cowbell"),
-            "bass.808short", 5, listOf(0, 3, 5, 7)),
+            "bass.808short", true, listOf(0, 3, 5, 7)),
         g("rock", "Rock", 120, "rock",
             listOf("kick.rock", "kick.punch", "kick.tight", "kick.deep"),
             listOf("snare.crack", "snare.pop", "snare.rim", "snare.soft"),
             listOf("hat.closed", "hat.open", "hat.tight", "hat.soft"),
             listOf("perc.crash", "perc.ride", "perc.tom", "perc.tamb"),
-            "bass.pluck", 5, listOf(0, 3, 5, 7)),
+            "bass.pluck", true, listOf(0, 3, 5, 7)),
         g("edm", "EDM", 128, "edm",
             listOf("kick.edm", "kick.punch", "kick.tight", "kick.boom"),
             listOf("snare.clap", "snare.crack", "snare.pop", "snare.trap"),
             listOf("hat.closed", "hat.open", "hat.trap", "hat.tight"),
             listOf("perc.crash", "perc.cowbell", "perc.shaker", "perc.tom"),
-            "bass.synth", 5, listOf(0, 3, 5, 7)),
+            "bass.synth", true, listOf(0, 3, 5, 7)),
         g("jazz", "Jazz", 100, "jazz",
             listOf("kick.soft", "kick.deep", "kick.tight", "kick.lofi"),
             listOf("snare.brush", "snare.soft", "snare.rim", "snare.pop"),
             listOf("hat.soft", "hat.closed", "hat.open", "hat.shaker"),
             listOf("perc.ride", "perc.shaker", "perc.conga", "perc.clave"),
-            "bass.pluck", 5, listOf(0, 3, 7, 10)),
+            "bass.pluck", true, listOf(0, 3, 7, 10)),
         g("acoustic", "Acoustic / Folk", 100, "pop",
             listOf("kick.soft", "kick.tight", "kick.deep", "kick.punch"),
             listOf("snare.soft", "snare.brush", "snare.rim", "snare.pop"),
             listOf("hat.soft", "hat.closed", "hat.open", "hat.shaker"),
             listOf("perc.tamb", "perc.shaker", "perc.conga", "perc.clave"),
-            "bass.pluck", 5, listOf(0, 4, 5, 7)),
+            "bass.pluck", false, listOf(0, 4, 5, 7)),
         g("latin", "Latin", 100, "latin",
             listOf("kick.tight", "kick.soft", "kick.punch", "kick.deep"),
             listOf("snare.rim", "snare.soft", "snare.pop", "snare.clap"),
             listOf("hat.closed", "hat.shaker", "hat.open", "hat.soft"),
             listOf("perc.conga", "perc.bongo", "perc.cowbell", "perc.clave"),
-            "bass.pluck", 5, listOf(0, 5, 7, 10)),
+            "bass.pluck", true, listOf(0, 5, 7, 10)),
     )
 
     fun genre(id: String): Genre? = genres.firstOrNull { it.id == id }

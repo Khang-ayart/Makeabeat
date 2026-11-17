@@ -74,13 +74,16 @@ Song* decodeSong(const int32_t* d, int n) {
             if (i + 2 > n) return nullptr;
             const int len = d[i++];
             const int hits = d[i++];
-            if (len < 0 || hits < 0 || static_cast<int64_t>(i) + 3LL * hits + 1 > n) return nullptr;
+            if (len < 0 || hits < 0 || static_cast<int64_t>(i) + 4LL * hits + 1 > n) return nullptr;
             PadPattern& pp = td.pads[static_cast<size_t>(k)];
             pp.len = std::clamp(len, 0, kMaxPadLen);
             pp.hits.reserve(static_cast<size_t>(hits));
-            for (int h = 0; h < hits; ++h, i += 3) {
-                if (d[i] < 0 || d[i] >= pp.len || d[i + 2] < 0 || d[i + 2] >= kitCount) continue;  // hit lạc: bỏ
-                pp.hits.push_back({d[i], static_cast<uint8_t>(std::clamp(d[i + 1], 1, 127)), static_cast<uint8_t>(d[i + 2])});
+            for (int h = 0; h < hits; ++h, i += 4) {
+                const int idx = d[i + 2];
+                const bool keyNote = idx >= kKeyNoteBase && idx < kKeyNoteBase + 128;
+                if (d[i] < 0 || d[i] >= pp.len || idx < 0 || (!keyNote && idx >= kitCount)) continue;  // hit lạc: bỏ
+                pp.hits.push_back({d[i], std::clamp(d[i + 3], 1, 1 << 20), static_cast<uint8_t>(std::clamp(d[i + 1], 1, 127)),
+                                   static_cast<uint8_t>(idx)});
             }
             std::stable_sort(pp.hits.begin(), pp.hits.end(),
                              [](const PadHit& a, const PadHit& b) { return a.start < b.start; });
@@ -92,7 +95,8 @@ Song* decodeSong(const int32_t* d, int n) {
             Note nt;
             nt.start = std::max(0, d[i]);
             nt.dur = std::max(1, d[i + 1]);
-            nt.pitch = static_cast<uint8_t>(std::clamp(d[i + 2], 0, 127));
+            // Track Looper: pitch < 128 là pad trong kit, >= 128 là nốt keyboard (MIDI = pitch - 128).
+            nt.pitch = static_cast<uint8_t>(std::clamp(d[i + 2], 0, td.inst == Inst::Looper ? 255 : 127));
             nt.vel = static_cast<uint8_t>(std::clamp(d[i + 3], 1, 127));
             td.notes.push_back(nt);
         }
@@ -213,13 +217,14 @@ bool EngineCore::padLaunch(int track, int row, int pad) noexcept {
     return commands_.push(c);
 }
 
-bool EngineCore::popRecEvent(int32_t out[4]) noexcept {
+bool EngineCore::popRecEvent(int32_t out[5]) noexcept {
     RecEvent e;
     if (!recEvents_.pop(e)) return false;
     out[0] = e.tick;
     out[1] = e.track;
     out[2] = e.kitIdx;
     out[3] = e.vel;
+    out[4] = e.dur;
     return true;
 }
 
@@ -310,13 +315,17 @@ void EngineCore::runPads(int track, int64_t tick) noexcept {
                                    [](const PadHit& h, int32_t x) { return h.start < x; });
         for (; it != pp.hits.end() && it->start == phase; ++it) {
             if (recording_.load(std::memory_order_relaxed)) {
-                recEvents_.push(RecEvent{static_cast<int32_t>(tick), track, it->kitIdx, it->vel});
+                recEvents_.push(RecEvent{static_cast<int32_t>(tick), track, it->kitIdx, it->vel, it->dur});
             }
             if (audible_[track]) {
                 // Hạt giống theo (vị trí trong chu kỳ, pad, track, âm): mỗi vòng lặp giống hệt từng bit.
                 const uint64_t seed = static_cast<uint64_t>(phase) * 2654435761ULL + static_cast<uint64_t>(r.active) * 7919ULL +
                                       static_cast<uint64_t>(track) * 40503ULL + static_cast<uint64_t>(it->kitIdx) * 9973ULL + 1ULL;
-                startVoice(Inst::Looper, track, it->kitIdx, it->vel, -1, true, seed);
+                if (it->kitIdx >= kKeyNoteBase) {
+                    startVoice(Inst::Piano, track, it->kitIdx - kKeyNoteBase, it->vel, tick + it->dur, true, seed);
+                } else {
+                    startVoice(Inst::Looper, track, it->kitIdx, it->vel, -1, true, seed);
+                }
             }
         }
     }
@@ -366,6 +375,10 @@ Voice* EngineCore::allocateVoice() noexcept {
 void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_t endTick, bool seq,
                             uint64_t seed) noexcept {
     track = std::clamp(track, 0, kMaxTracks - 1);
+    if (inst == Inst::Looper && note >= kKeyNoteBase) {  // nốt keyboard trong clip của track Looper
+        startVoice(Inst::Piano, track, note - kKeyNoteBase, velocity, endTick, seq, seed);
+        return;
+    }
     if (inst == Inst::Looper) {  // pad: âm lấy từ kit của track trong bài nhạc hiện tại
         const auto& kit = current_->tracks[track].kit;
         if (note < 0 || note >= static_cast<int>(kit.size())) return;  // pad chưa có âm: im lặng, không lỗi
@@ -552,9 +565,13 @@ void EngineCore::render(float* out, int numFrames) noexcept {
         int64_t m = 0;
         for (int row = 0; row < kPadRows; ++row) {
             const PadRow& r = padRows_[t][row];
-            if (r.active >= 0 && r.active < 20) m |= int64_t{1} << r.active;
-            if (r.queued >= 0 && r.queued < 20) m |= int64_t{1} << (20 + r.queued);
-            if (r.queued == -1 && r.active >= 0 && r.active < 20) m |= int64_t{1} << (40 + r.active);
+            // Bit 0-23: pad đang chạy. Bit 24-47: pad đang đổi trạng thái ở đầu chu kỳ kế
+            // (pad chưa chạy mà bit này bật = sắp vào; pad đang chạy mà bit này bật = sắp rời).
+            if (r.active >= 0 && r.active < kMaxPads) m |= int64_t{1} << r.active;
+            if (r.queued >= 0 && r.queued < kMaxPads) m |= int64_t{1} << (24 + r.queued);
+            if (r.queued != kNoQueue && r.active >= 0 && r.active < kMaxPads && r.queued != r.active) {
+                m |= int64_t{1} << (24 + r.active);
+            }
         }
         padMask_[t].store(m, std::memory_order_relaxed);
     }

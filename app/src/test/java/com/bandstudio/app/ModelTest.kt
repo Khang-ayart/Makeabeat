@@ -96,8 +96,8 @@ class ModelTest {
         assertEquals(Catalog.genres.size, Catalog.genres.map { it.id }.toSet().size)
         for (g in Catalog.genres) {
             val kit = g.kit()
-            assertEquals("${g.id}: số pad", PAD_COUNT, kit.size)
-            SoundCat.entries.forEachIndexed { row, cat ->
+            assertEquals("${g.id}: số âm trong kit", com.bandstudio.app.model.KIT_COUNT, kit.size)
+            SoundCat.entries.filter { it != SoundCat.KEYS }.forEachIndexed { row, cat ->
                 val rowPads = kit.subList(row * PADS_PER_ROW, (row + 1) * PADS_PER_ROW)
                 for (pad in rowPads) {
                     val snd = Catalog.sound(pad.soundId)
@@ -153,14 +153,14 @@ class ModelTest {
         val data = Project("p", "n", tracks = listOf(t)).encodeForEngine(false, 0, 0, 3840)
         assertEquals(3, data[0])
         assertEquals(Instrument.LOOPER.id, data[6])
-        assertEquals(PAD_COUNT, data[7])
-        var i = 8 + PAD_COUNT * Patch.INTS
+        assertEquals(com.bandstudio.app.model.KIT_COUNT, data[7])
+        var i = 8 + com.bandstudio.app.model.KIT_COUNT * Patch.INTS
         assertEquals(PAD_COUNT, data[i++])
         for (pad in 0 until PAD_COUNT) { // mỗi pad: len, số hit, rồi các hit
-            assertEquals(Patterns.LEN_TICKS, data[i++])
+            assertEquals(Patterns.lenTicks(pad), data[i++])
             val n = data[i++]
-            assertEquals(Patterns.hits(genre.family, pad).size, n)
-            i += n * 3
+            assertEquals(Patterns.padHits(genre, com.bandstudio.app.model.DEFAULT_KEY, pad).size, n)
+            i += n * 4
         }
         assertEquals(1, data[i])
         assertArrayEquals(intArrayOf(480, 240, 5, 90), data.copyOfRange(i + 1, i + 5))
@@ -195,14 +195,14 @@ class ModelTest {
     fun everyGenreFamilyHasPlayablePatternsForAllPads() {
         for (g in Catalog.genres) {
             assertTrue("${g.id}: họ ${g.family}", g.family in Patterns.familyIds)
-            for (pad in 0 until PAD_COUNT) {
+            for (pad in 0 until com.bandstudio.app.model.KIT_COUNT) {
                 val str = Patterns.pattern(g.family, pad)
                 assertTrue("${g.family}/$pad", str != null && str.length == Patterns.STEPS)
                 val hits = Patterns.hits(g.family, pad)
                 assertTrue("${g.family}/$pad rỗng", hits.isNotEmpty())
                 val row = pad / PADS_PER_ROW
                 for (h in hits) {
-                    assertTrue(h.step in 0 until Patterns.STEPS && h.vel in 1..127)
+                    assertTrue(h.tick in 0 until Patterns.LEN_TICKS && h.vel in 1..127)
                     // Hàng Bass chỉ chạm 4 nốt của hàng Bass; các hàng khác chạm đúng âm của pad.
                     if (row == SoundCat.BASS.ordinal) assertTrue(h.kitIdx in 16..19) else assertEquals(pad, h.kitIdx)
                 }
@@ -212,10 +212,39 @@ class ModelTest {
 
     @Test
     fun padsInARowDifferFromEachOther() {
-        for (g in Catalog.genres) for (row in 0 until SoundCat.entries.size) {
+        for (g in Catalog.genres) for (row in 0 until SoundCat.entries.size - 1) {
             val set = (0 until PADS_PER_ROW).map { Patterns.pattern(g.family, row * PADS_PER_ROW + it) }.toSet()
             assertEquals("${g.family}/$row: 4 mẫu phải khác nhau", PADS_PER_ROW, set.size)
         }
+    }
+
+    @Test
+    fun keyboardPadsPlayChordsInKey() {
+        for (g in Catalog.genres) for (key in 0 until 12) for (col in 0 until PADS_PER_ROW) {
+            val pad = SoundCat.KEYS.ordinal * PADS_PER_ROW + col
+            assertTrue(Patterns.isKeyPad(pad))
+            val hits = Patterns.padHits(g, key, pad)
+            assertTrue("${g.id}/$key/$col rỗng", hits.isNotEmpty())
+            for (h in hits) {
+                assertTrue(h.tick in 0 until Patterns.lenTicks(pad))
+                assertTrue(h.kitIdx in 128 + 40..128 + 80)
+                assertTrue(h.dur > 0 && h.vel in 1..127)
+            }
+            // Ô nhịp đầu phải bắt đầu bằng chủ âm của hợp âm đầu tiên.
+            val first = Patterns.progression(g.minor, pad)[0]
+            val pcs = hits.filter { it.tick < 40 }.map { (it.kitIdx - 128) % 12 }.toSet()
+            val root = Math.floorMod(key + first.root, 12)
+            assertTrue("${g.id}/$key: thiếu chủ âm", root in pcs || hits.first().kitIdx - 128 == 48 + root)
+        }
+    }
+
+    @Test
+    fun looperKeyRoundTripsAndMovesBass() {
+        val g = Catalog.genre("trap")!!
+        val t = Track(1, "L", Instrument.LOOPER, genreId = g.id, kit = g.kit(3), keyRoot = 3)
+        val back = com.bandstudio.app.model.projectFromJson(org.json.JSONObject(Project("p", "n", tracks = listOf(t)).toJson().toString()))
+        assertEquals(3, back.tracks[0].keyRoot)
+        assertTrue(g.kit(3) != g.kit(4))
     }
 
     // ---- Mẫu âm thật ----

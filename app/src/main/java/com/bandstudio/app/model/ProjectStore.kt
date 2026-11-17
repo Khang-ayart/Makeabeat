@@ -22,6 +22,7 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
             put("solo", t.solo)
             if (t.instrument.isLooper) {
                 put("genre", t.genreId)
+                put("key", t.keyRoot)
                 put("kit", JSONArray().also { ka -> for (pad in t.kit) ka.put(JSONArray().put(pad.soundId).put(pad.semitones)) })
             }
             put("clips", JSONArray().also { cs ->
@@ -73,6 +74,7 @@ fun projectFromJson(o: JSONObject): Project {
                 clips = clips,
                 genreId = t.optString("genre", ""),
                 kit = kit,
+                keyRoot = Math.floorMod(t.optInt("key", DEFAULT_KEY), 12),
             ),
         )
     }

@@ -101,12 +101,12 @@ JNIEXPORT void JNICALL JNI_FN(setPadRecording)(JNIEnv*, jobject, jboolean on) {
     if (gEngine) gEngine->core().setRecording(on == JNI_TRUE);
 }
 
-// out có 4 phần tử: tick, track, kitIdx, vel. Trả false nếu hết sự kiện.
+// out có 5 phần tử: tick, track, kitIdx, vel, dur. Trả false nếu hết sự kiện.
 JNIEXPORT jboolean JNICALL JNI_FN(popPadEvent)(JNIEnv* env, jobject, jintArray out) {
-    if (!gEngine || !out || env->GetArrayLength(out) < 4) return JNI_FALSE;
-    int32_t e[4];
+    if (!gEngine || !out || env->GetArrayLength(out) < 5) return JNI_FALSE;
+    int32_t e[5];
     if (!gEngine->core().popRecEvent(e)) return JNI_FALSE;
-    env->SetIntArrayRegion(out, 0, 4, reinterpret_cast<const jint*>(e));
+    env->SetIntArrayRegion(out, 0, 5, reinterpret_cast<const jint*>(e));
     return JNI_TRUE;
 }
 

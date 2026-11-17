@@ -52,7 +52,7 @@ import com.bandstudio.app.model.Clip
 import com.bandstudio.app.model.DRUM_NAMES
 import com.bandstudio.app.model.MAX_CLIP_BARS
 import com.bandstudio.app.model.PADS_PER_ROW
-import com.bandstudio.app.model.PAD_COUNT
+import com.bandstudio.app.model.KIT_COUNT
 import com.bandstudio.app.model.PPQ
 import com.bandstudio.app.model.Quantizer
 import com.bandstudio.app.model.ROLL_HIGH
@@ -303,9 +303,10 @@ private fun shortCat(c: SoundCat) = when (c) {
     SoundCat.HAT -> "Hat"
     SoundCat.PERC -> "Perc"
     SoundCat.BASS -> "Bass"
+    SoundCat.KEYS -> "Keys"
 }
 
-private fun looperRows(track: Track): List<PadRow> = List(PAD_COUNT) { i ->
+private fun looperRows(track: Track): List<PadRow> = List(KIT_COUNT) { i ->
     val cat = SoundCat.entries[i / PADS_PER_ROW]
     val label = track.kit.getOrNull(i)?.let { Catalog.padLabel(it) } ?: "—"
     PadRow("${shortCat(cat)} · $label", Color(cat.color), i, groupStart = i % PADS_PER_ROW == 0)
@@ -415,7 +416,7 @@ private fun DrumPads(vm: StudioViewModel, color: Color) {
 @Composable
 private fun LooperPads(vm: StudioViewModel, track: Track) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        SoundCat.entries.forEachIndexed { row, cat ->
+        SoundCat.entries.filter { it != SoundCat.KEYS }.forEachIndexed { row, cat ->
             val color = Color(cat.color)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(

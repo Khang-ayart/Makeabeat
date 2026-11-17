@@ -56,15 +56,17 @@ struct Patch {
 
 // Looper: mỗi pad là một nhịp lặp. Pad i nằm ở hàng i / 4. Nhịp gồm các cú đánh (hit) trong một chu kỳ
 // dài len tick; engine tự phát lặp khi pad được bật, vào đúng đầu chu kỳ để mọi pad luôn khớp nhau.
-constexpr int kPadRows = 5;
+constexpr int kPadRows = 6;  // Kick, Snare, Hi-hat, Percussion, Bass, Keyboard
 constexpr int kPadsPerRow = 4;
 constexpr int kMaxPads = kPadRows * kPadsPerRow;
 constexpr int kMaxPadLen = 8 * 3840;  // tối đa 8 ô nhịp
 struct PadHit {
     int32_t start;    // tick trong chu kỳ, [0, len)
+    int32_t dur;      // độ dài nốt (chỉ dùng cho nốt keyboard)
     uint8_t vel;
-    uint8_t kitIdx;   // phát âm nào trong kit của track
+    uint8_t kitIdx;   // < 128: phát âm số kitIdx trong kit của track; >= 128: nốt keyboard, MIDI = kitIdx - 128
 };
+constexpr int kKeyNoteBase = 128;
 struct PadPattern {
     int32_t len = 0;  // 0 = pad trống
     std::vector<PadHit> hits;  // đã sắp theo start

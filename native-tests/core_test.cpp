@@ -44,6 +44,7 @@ struct N {
 using Kit = std::vector<std::array<int32_t, kPatchInts>>;
 struct Hit {
     int start, vel, kitIdx;
+    int dur = 0;  // chỉ nốt keyboard (kitIdx >= 128)
 };
 struct PadSpec {
     int len;
@@ -73,6 +74,7 @@ static std::vector<int32_t> encode(bool loop, int ls, int le, int len, const std
                 d.push_back(h.start);
                 d.push_back(h.vel);
                 d.push_back(h.kitIdx);
+                d.push_back(h.dur);
             }
         }
         d.push_back(static_cast<int32_t>(t.notes.size()));
@@ -850,7 +852,7 @@ static void testPadMidBarLaunchWaitsForBoundary() {
     core->padLaunch(0, 0, 2);
     renderAll(*core, 1, 480, 480);
     int64_t m = core->padMask(0);
-    CHECK((m >> 22) & 1, "queued bit missing (mask %llx)", static_cast<unsigned long long>(m));
+    CHECK((m >> 26) & 1, "queued bit missing (mask %llx)", static_cast<unsigned long long>(m));
     CHECK(!((m >> 2) & 1), "active too early");
     const auto out = renderAll(*core, 1, 72000 - 960 + 2000, 480);  // qua biên ô nhịp
     const auto on = findOnsets(out);
@@ -862,7 +864,7 @@ static void testPadMidBarLaunchWaitsForBoundary() {
     }
     m = core->padMask(0);
     CHECK((m >> 2) & 1, "active bit missing");
-    CHECK(((m >> 22) & 1) == 0, "queued bit not cleared");
+    CHECK(((m >> 26) & 1) == 0, "queued bit not cleared");
 }
 
 static void testPadRowExclusiveSwitchAndStop() {
@@ -914,7 +916,7 @@ static void testPadRecordEventsAndInvalid() {
     core->padLaunch(0, 0, 0);
     core->padLaunch(0, 2, 8);   // pad rỗng (len 0): chạy nhưng im lặng
     renderAll(*core, 1, 96000 + 1000, 480);
-    int32_t e[4];
+    int32_t e[5];
     std::vector<std::array<int32_t, 4>> evs;
     while (core->popRecEvent(e)) evs.push_back({e[0], e[1], e[2], e[3]});
     CHECK(evs.size() == 3, "events %zu", evs.size());
@@ -1002,6 +1004,48 @@ static void testSamplerBitExactAndBounded() {
     CHECK(bounded, "exceeded [-1, 1]");
 }
 
+// ---- Looper: hàng Keyboard (nốt có cao độ, pad dài nhiều ô nhịp) ----------------------------
+
+static void testKeyboardPadPitchAndRelease() {
+    begin("Keyboard: pad 4 ô nhịp phát đúng nốt (cao độ < 10 cent), đúng thời điểm, nhả đúng độ dài");
+    const int len = 4 * 3840;
+    // 120 BPM: 1 phách = 24000 khung. Nốt C4 (60) ở tick 0, G4 (67) ở tick 3840 (đầu ô 2), dài 2 phách.
+    auto pads = padSet({{20, {len, {{0, 90, 128 + 60, 1920}, {3840, 90, 128 + 67, 1920}}}}});
+    auto core = padCore(pads);
+    core->play(0);
+    core->padLaunch(0, 5, 20);
+    const int sr = 48000;
+    const auto out = renderAll(*core, 1, 96000 * 2, 480);
+    const double f1 = estimateFreq(out, sr, 261.6256);
+    CHECK(std::fabs(1200.0 * std::log2(f1 / 261.6256)) < 10.0, "C4 off: %.2f Hz", f1);
+    std::vector<float> second(out.begin() + 96000, out.end());
+    const double f2 = estimateFreq(second, sr, 391.9954);
+    CHECK(std::fabs(1200.0 * std::log2(f2 / 391.9954)) < 10.0, "G4 off: %.2f Hz", f2);
+    // Nốt đầu dài 2 phách = 48000 khung rồi nhả; ngay trước ô 2 (khung 90000) gần như im lặng.
+    CHECK(peak(out, 0, 2000) > 0.02f, "no onset at 0");
+    CHECK(peak(out, 90000, 5000) < 0.01f, "note not released (peak %f)", peak(out, 90000, 5000));
+    CHECK(peak(out, 96000, 2000) > 0.02f, "second chord missing");
+}
+
+static void testKeyboardNotesInClip() {
+    begin("Keyboard: nốt pitch >= 128 trong clip của track Looper phát như piano, pitch < 128 vẫn là pad; hit keyboard sai bị bỏ");
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {{960, 960, 128 + 69, 100}, {2880, 240, 3, 100}}, testKit())}));
+    core->play(0);
+    const auto out = renderAll(*core, 1, 24000 * 5, 480);
+    CHECK(peak(out, 24000 + 2000, 4000) > 0.05f, "keyboard note silent");
+    CHECK(peak(out, 24000 * 3 + 100, 2000) > 0.02f, "pad note silent");
+    const double f = estimateFreq(std::vector<float>(out.begin() + 24000, out.end()), 48000, 440.0);
+    CHECK(std::fabs(1200.0 * std::log2(f / 440.0)) < 10.0, "A4 off: %.2f Hz", f);
+
+    // Hit keyboard ngoài khoảng (128 + 128) hoặc chỉ số kit sai phải bị bỏ khi giải mã, không làm hỏng bài.
+    auto bad = encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, testKit(),
+                                                  padSet({{20, {3840, {{0, 90, 300, 480}, {480, 90, 31, 0}, {960, 90, 128 + 60, 480}}}}}))});
+    std::unique_ptr<Song> song(decodeSong(bad.data(), static_cast<int>(bad.size())));
+    CHECK(song != nullptr, "decode failed");
+    if (song) CHECK(song->tracks[0].pads[20].hits.size() == 1, "invalid hits kept: %zu", song->tracks[0].pads[20].hits.size());
+}
+
 int main() {
     testExactBeatsAt120();
     testNoDriftAtOddTempo();
@@ -1041,6 +1085,8 @@ int main() {
     testSamplerPlaysAndEnds();
     testSamplerResamplesAndFallsBack();
     testSamplerBitExactAndBounded();
+    testKeyboardPadPitchAndRelease();
+    testKeyboardNotesInClip();
 
     if (g_failures == 0) {
         std::printf("\nALL %d TESTS PASSED\n", g_tests);

@@ -53,7 +53,7 @@ public:
     // Bật cờ ghi: engine báo mỗi cú đánh do nhịp pad phát ra để UI ghi thành nốt.
     void setRecording(bool on) noexcept { recording_.store(on, std::memory_order_relaxed); }
     // Lấy một sự kiện ghi: out = {tick, track, kitIdx, vel}. false nếu hết.
-    bool popRecEvent(int32_t out[4]) noexcept;
+    bool popRecEvent(int32_t out[5]) noexcept;  // tick, track, kitIdx, vel, dur
     // Trạng thái pad của track để UI vẽ: bit 0-19 đang chạy, 20-39 chờ bật, 40-59 chờ tắt.
     int64_t padMask(int track) const noexcept {
         return (track >= 0 && track < kMaxTracks) ? padMask_[track].load(std::memory_order_relaxed) : 0;
@@ -124,7 +124,7 @@ private:
     std::atomic<int64_t> padMask_[kMaxTracks] = {};
     std::atomic<bool> recording_{false};
     struct RecEvent {
-        int32_t tick = 0, track = 0, kitIdx = 0, vel = 0;
+        int32_t tick = 0, track = 0, kitIdx = 0, vel = 0, dur = 0;
     };
     SpscQueue<RecEvent, 512> recEvents_;  // âm thanh -> UI
 

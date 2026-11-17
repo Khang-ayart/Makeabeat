@@ -17,6 +17,7 @@ import com.bandstudio.app.model.MAX_BARS
 import com.bandstudio.app.model.MAX_CLIP_BARS
 import com.bandstudio.app.model.MAX_TRACKS
 import com.bandstudio.app.model.PADS_PER_ROW
+import com.bandstudio.app.model.DEFAULT_KEY
 import com.bandstudio.app.model.PAD_COUNT
 import com.bandstudio.app.model.NoteEvent
 import com.bandstudio.app.model.PPQ
@@ -90,7 +91,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         private set
     private var launcherRecStartTick = 0
     private val launcherEvents = ArrayList<IntArray>() // {tick, track, kitIdx, vel}
-    private val eventBuf = IntArray(4)
+    private val eventBuf = IntArray(5)
     var canRedo by mutableStateOf(false)
         private set
 
@@ -326,7 +327,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val row = pad / PADS_PER_ROW
         val m = padMask
         val active = (m shr pad) and 1L == 1L
-        val queuedOff = (m shr (40 + pad)) and 1L == 1L
+        val queuedOff = active && (m shr (24 + pad)) and 1L == 1L
         when {
             active && !queuedOff -> AudioEngine.padLaunch(idx, row, -1)
             else -> AudioEngine.padLaunch(idx, row, pad) // chưa chạy, hoặc đang chờ tắt -> huỷ lệnh tắt
@@ -399,7 +400,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 val lo = startTick + done * BAR_TICKS
                 val hi = lo + n * BAR_TICKS
                 val notes = events.filter { it[0] in lo until hi }
-                    .map { NoteEvent(it[0] - lo, STEP_TICKS, it[2], it[3]) }
+                    .map { NoteEvent(it[0] - lo, if (it[4] > 0) it[4] else STEP_TICKS, it[2], it[3]) }
                     .distinctBy { it.pitch to it.start }
                     .sortedBy { it.start }
                 clips.add(Clip(nextId++, bar, n, notes))
@@ -493,7 +494,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val base = if (inst.isLooper && genre != null) "Looper · ${genre.label}" else inst.label
         val name = if (same == 0) base else "$base ${same + 1}"
         val track = if (inst.isLooper && genre != null) {
-            Track(p.nextId, name, inst, genreId = genre.id, kit = genre.kit())
+            Track(p.nextId, name, inst, genreId = genre.id, kit = genre.kit(DEFAULT_KEY))
         } else {
             Track(p.nextId, name, inst)
         }
@@ -505,7 +506,16 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     fun setLooperGenre(trackId: Int, genre: Genre) = commit { p ->
         mapTrack(p, trackId) { t ->
             if (!t.instrument.isLooper) t
-            else t.copy(genreId = genre.id, kit = genre.kit(), name = "Looper · ${genre.label}")
+            else t.copy(genreId = genre.id, kit = genre.kit(t.keyRoot), name = "Looper · ${genre.label}")
+        }
+    }
+
+    /** Đổi tông chung của track Looper: bass và hợp âm Keyboard đi theo. */
+    fun setLooperKey(trackId: Int, key: Int) = commit { p ->
+        mapTrack(p, trackId) { t ->
+            val g = Catalog.genre(t.genreId)
+            if (!t.instrument.isLooper || g == null) t
+            else t.copy(keyRoot = Math.floorMod(key, 12), kit = g.kit(Math.floorMod(key, 12)))
         }
     }
 

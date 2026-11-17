@@ -78,7 +78,7 @@ fun LauncherScreen(vm: StudioViewModel) {
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Center,
             )
-            Box(Modifier.width(80.dp))
+            KeyPicker(vm, s.trackId, track.keyRoot)
         }
 
         Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -86,7 +86,7 @@ fun LauncherScreen(vm: StudioViewModel) {
                 Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (col in 0 until PADS_PER_ROW) {
                         val pad = row * PADS_PER_ROW + col
-                        val label = padTitle(track, pad, cat, col)
+                        val label = if (cat == SoundCat.KEYS && genre != null) Patterns.progressionLabel(track.keyRoot, genre.minor, pad) else padTitle(track, pad, cat, col)
                         LoopPad(vm, pad, label, genre?.family ?: "", Color(cat.color), Modifier.weight(1f).fillMaxSize())
                     }
                 }
@@ -94,6 +94,21 @@ fun LauncherScreen(vm: StudioViewModel) {
         }
 
         LauncherTransport(vm, project.bpm)
+    }
+}
+
+@Composable
+private fun KeyPicker(vm: StudioViewModel, trackId: Int, key: Int) {
+    var open by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 10.dp), modifier = Modifier.width(80.dp)) {
+            Text("Tông ${com.bandstudio.app.model.KEY_NAMES[key]}", maxLines = 1)
+        }
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            com.bandstudio.app.model.KEY_NAMES.forEachIndexed { i, n ->
+                androidx.compose.material3.DropdownMenuItem(text = { Text(n) }, onClick = { vm.setLooperKey(trackId, i); open = false })
+            }
+        }
     }
 }
 
@@ -107,13 +122,14 @@ private fun padTitle(track: com.bandstudio.app.model.Track, pad: Int, cat: Sound
 private fun LoopPad(vm: StudioViewModel, pad: Int, title: String, family: String, color: Color, modifier: Modifier) {
     val mask = vm.padMask
     val active = (mask shr pad) and 1L == 1L
-    val queuedOn = (mask shr (20 + pad)) and 1L == 1L
-    val queuedOff = (mask shr (40 + pad)) and 1L == 1L
+    val pending = (mask shr (24 + pad)) and 1L == 1L
+    val queuedOn = pending && !active
+    val queuedOff = pending && active
     val blink by rememberInfiniteTransition(label = "queued").animateFloat(
         initialValue = 0.25f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(280), RepeatMode.Reverse), label = "blink",
     )
-    val pattern = Patterns.pattern(family, pad) ?: ""
+    val pattern = (if (Patterns.isKeyPad(pad)) Patterns.keyRhythm(family, pad) else Patterns.pattern(family, pad)) ?: ""
     val shape = RoundedCornerShape(10.dp)
     val fill = when {
         active && !queuedOff -> color

@@ -73,6 +73,8 @@ data class Track(
     /** Chỉ track Looper: thể loại đang chọn và 20 pad (4 lựa chọn x 5 hàng). Pitch của nốt = chỉ số pad. */
     val genreId: String = "",
     val kit: List<PadSpec> = emptyList(),
+    /** Chỉ track Looper: tông chung (0=C..11=B) cho bass và hợp âm Keyboard. */
+    val keyRoot: Int = DEFAULT_KEY,
 ) {
     /** Còn trống [startBar, startBar+bars) không (bỏ qua clip [ignoreId])? */
     fun isFree(startBar: Int, bars: Int, ignoreId: Int = -1): Boolean =
@@ -97,8 +99,8 @@ data class Project(
 
 /**
  * Đóng gói bài nhạc thành mảng int cho engine C++ (xem decodeSong trong engine_core.h):
- * [3, loop, loopStart, loopEnd, length, trackCount, rồi mỗi track: inst, kitCount, kitCount * 17 số của Patch,
- * padCount, mỗi pad: len, hitCount, hitCount * (start, vel, kitIdx), noteCount, noteCount * (start, dur, pitch, vel)].
+ * [3, loop, loopStart, loopEnd, length, trackCount, rồi mỗi track: inst, kitCount, kitCount * 18 số của Patch,
+ * padCount, mỗi pad: len, hitCount, hitCount * (start, vel, kitIdx, dur), noteCount, noteCount * (start, dur, pitch, vel)].
  * kit và pad chỉ có ở track Looper (các track khác = 0). [launcherTrackId] != null: chế độ lưới Looper, chỉ nhịp pad
  * của track đó phát, mọi track khác (và clip của chính nó) bị bỏ nốt nhưng giữ nguyên chỉ số track.
  * Nốt của mọi clip được trải ra tick tuyệt đối trong bài; nốt vượt quá độ dài clip bị bỏ / cắt.
@@ -132,13 +134,13 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
         out.add(kit.size)
         for (pad in kit) Catalog.patchFor(pad).encodeTo(out)
         if (t.instrument.isLooper && kit.isNotEmpty()) {
-            val family = Catalog.genre(t.genreId)?.family ?: ""
+            val genre = Catalog.genre(t.genreId)
             out.add(PAD_COUNT)
             for (pad in 0 until PAD_COUNT) {
-                val hits = Patterns.hits(family, pad)
-                out.add(Patterns.LEN_TICKS)
+                val hits = if (genre == null) emptyList() else Patterns.padHits(genre, t.keyRoot, pad)
+                out.add(Patterns.lenTicks(pad))
                 out.add(hits.size)
-                for (h in hits) { out.add(h.step * STEP_TICKS); out.add(h.vel); out.add(h.kitIdx) }
+                for (h in hits) { out.add(h.tick); out.add(h.vel); out.add(h.kitIdx); out.add(h.dur) }
             }
         } else {
             out.add(0)
