@@ -983,6 +983,26 @@ static void testSamplerResamplesAndFallsBack() {
     CHECK(peak(b, 0, b.size()) > 0.05f, "fallback synth silent");
 }
 
+static void testSamplerLowPass() {
+    begin("Sampler: noiseLP làm tối mẫu (cao tần bị hạ), 0 thì giữ nguyên");
+    auto run = [&](int lp1000) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        const auto smp = rampSample(4800);  // đổi dấu mỗi mẫu = toàn cao tần
+        core->loadSample(0, smp.data(), 4800, 48000);
+        auto patch = samplePatch(0);
+        patch[8] = lp1000;
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, Kit{patch})}));
+        renderAll(*core, 1, 64, 64);
+        core->noteOn(static_cast<int>(Inst::Looper), 0, 0, 127);
+        return renderAll(*core, 1, 4800, 480);
+    };
+    const auto raw = run(0), dark = run(800);
+    const float pr = peak(raw, 100, 1500), pd = peak(dark, 100, 1500);
+    CHECK(pr > 0.3f, "raw sample too quiet");
+    CHECK(pd < 0.4f * pr, "low-pass did not darken (%f vs %f)", pd, pr);
+    CHECK(run(0) == raw, "not deterministic");
+}
+
 static void testSamplerBitExactAndBounded() {
     begin("Sampler: pad dùng mẫu lặp giống hệt từng bit, đầu ra trong [-1, 1] với gain lớn");
     auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
@@ -1130,6 +1150,7 @@ int main() {
     testPadRecordEventsAndInvalid();
     testSamplerPlaysAndEnds();
     testSamplerResamplesAndFallsBack();
+    testSamplerLowPass();
     testSamplerBitExactAndBounded();
     testMasterFx();
     testKeyboardPadPitchAndRelease();

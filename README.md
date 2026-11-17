@@ -31,7 +31,7 @@ app/src/main/java/com/bandstudio/app/
   model/            Project / Track / Clip / Note, Quantizer, mã hóa gửi engine (v2), lưu JSON, Sounds.kt (danh mục 39 âm + 11 thể loại)
   StudioViewModel   Trạng thái, Undo/Redo, ghi MIDI có bù độ trễ
   ui/               Home, Studio (timeline), Editor (Piano Roll, Drum Sequencer, Pad, phím)
-native-tests/core_test.cpp   41 bài kiểm thử lõi
+native-tests/core_test.cpp   42 bài kiểm thử lõi
 app/src/test/               Unit test Kotlin (Quantizer, mã hóa bài nhạc)
 ```
 

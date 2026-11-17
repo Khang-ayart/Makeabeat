@@ -90,6 +90,7 @@ struct Voice {
     const float* smpData = nullptr;
     int smpLen = 0;
     double smpPos = 0.0, smpInc = 1.0;
+    float smpLp = 0.0f;  // trạng thái bộ lọc thấp cho mẫu (làm tối hi-hat/percussion theo thể loại)
 
     // seed: hạt giống nhiễu. Nốt do sequencer phát lấy từ (tick, track, nốt) nên mỗi vòng lặp giống hệt nhau từng bit.
     void start(Inst inst, int midiNote, int velocity, int sampleRate, uint64_t startOrder, uint64_t seed);
@@ -200,7 +201,12 @@ private:
                 smpData = nullptr;  // hết mẫu
             } else {
                 const float fr = static_cast<float>(smpPos - i0);
-                out += smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr;
+                float sv = smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr;
+                if (noiseLpK < 1.0f) {  // noiseLP của Patch áp cho cả mẫu thật
+                    smpLp += (sv - smpLp) * noiseLpK;
+                    sv = smpLp;
+                }
+                out += sv;
                 smpPos += smpInc;
             }
         }
@@ -405,6 +411,7 @@ inline void Voice::startPatch(const Patch& p, const Sample* smp, int padIndex, i
         smpData = smp->data.data();
         smpLen = static_cast<int>(smp->data.size());
         smpPos = 0.0;
+        smpLp = 0.0f;
         smpInc = static_cast<double>(smp->sampleRate) / sr;
         toneAmp = noiseAmp = 0.0f;
         e1 = e2 = 0.0f;

@@ -261,6 +261,20 @@ class ModelTest {
         assertEquals(Patterns.hits(pop.family, 8), Patterns.padHits(pop, com.bandstudio.app.model.DEFAULT_KEY, 8))
     }
 
+    @Test
+    fun hatAndPercAreDarkerAndQuieterInLofiThanKick() {
+        val lofi = Catalog.genre("lofi")!!
+        val kit = lofi.kit()
+        val kick = Catalog.patchFor("lofi", 0, kit[0])
+        val hat = Catalog.patchFor("lofi", 2 * PADS_PER_ROW, kit[2 * PADS_PER_ROW])
+        val perc = Catalog.patchFor("lofi", 3 * PADS_PER_ROW, kit[3 * PADS_PER_ROW])
+        assertEquals(1f, kick.gain, 0f)
+        assertEquals(0f, kick.noiseLP, 0f)
+        assertTrue(hat.gain < 0.7f && hat.noiseLP >= 0.4f)
+        assertTrue(perc.gain < 0.7f && perc.noiseLP >= 0.4f)
+        assertTrue(hat.sample >= 0 && perc.sample >= 0)
+    }
+
     // ---- Mẫu âm thật ----
 
     @Test

@@ -132,7 +132,7 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
         out.add(t.instrument.id)
         val kit = if (t.instrument.isLooper) t.kit.take(MAX_KIT) else emptyList()
         out.add(kit.size)
-        for (pad in kit) Catalog.patchFor(pad).encodeTo(out)
+        kit.forEachIndexed { i, pad -> Catalog.patchFor(t.genreId, i, pad).encodeTo(out) }
         if (t.instrument.isLooper && kit.isNotEmpty()) {
             val genre = Catalog.genre(t.genreId)
             out.add(PAD_COUNT)

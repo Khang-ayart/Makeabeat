@@ -170,11 +170,35 @@ object Catalog {
     private val sampleGain = mapOf(SoundCat.KICK to 1f, SoundCat.SNARE to 1f, SoundCat.HAT to 1f, SoundCat.PERC to 1f) // độ to đã cân sẵn trong mẫu
     val sounds: List<Sound> = allSounds.map { snd ->
         val slot = sampleIds.indexOf(snd.id)
-        if (slot < 0) snd else Sound(snd.id, snd.label, snd.cat, snd.patch.copy(sample = slot, gain = sampleGain.getValue(snd.cat)))
+        if (slot < 0) snd else Sound(snd.id, snd.label, snd.cat, snd.patch.copy(sample = slot, gain = sampleGain.getValue(snd.cat), noiseLP = 0f))
     }
     private val byId: Map<String, Sound> = sounds.associateBy { it.id }
 
     fun sound(id: String): Sound? = byId[id]
+
+    /**
+     * Xử lý "chung màu" theo thể loại cho hàng Hi-hat và Percussion: mẫu thô sáng và to hơn kick/snare nên nghe tách rời.
+     * Trả (độ tối 0..1 cho bộ lọc thấp, hệ số âm lượng). Kick, snare, bass giữ nguyên.
+     */
+    fun toneFor(genreId: String, cat: SoundCat): Pair<Float, Float> {
+        val hat = cat == SoundCat.HAT
+        if (!hat && cat != SoundCat.PERC) return 0f to 1f
+        return when (genreId) {
+            "lofi" -> if (hat) 0.50f to 0.55f else 0.45f to 0.55f
+            "rnb", "ballad", "jazz", "acoustic" -> if (hat) 0.35f to 0.60f else 0.30f to 0.65f
+            "hiphop" -> if (hat) 0.40f to 0.62f else 0.35f to 0.68f
+            else -> if (hat) 0.15f to 0.70f else 0.10f to 0.75f
+        }
+    }
+
+    /** Patch của pad thứ [index] trong kit của thể loại [genreId], đã áp xử lý màu âm. */
+    fun patchFor(genreId: String, index: Int, pad: PadSpec): Patch {
+        val p = patchFor(pad)
+        if (p.sample < 0) return p
+        val cat = SoundCat.entries.getOrNull(index / PADS_PER_ROW) ?: return p
+        val (lp, g) = toneFor(genreId, cat)
+        return if (lp == 0f && g == 1f) p else p.copy(noiseLP = lp, gain = p.gain * g)
+    }
 
     /** Thông số của pad; âm không còn trong danh mục (dự án cũ) sẽ im lặng thay vì lỗi. */
     fun patchFor(pad: PadSpec): Patch =
