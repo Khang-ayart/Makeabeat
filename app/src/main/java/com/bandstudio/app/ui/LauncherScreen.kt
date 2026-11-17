@@ -203,7 +203,7 @@ private fun LauncherTransport(vm: StudioViewModel, bpm: Int) {
         }
         Text(
             if (vm.launcherRecording) "Đang ghi: phần bạn chơi sẽ thành clip khi bấm ● lần nữa."
-            else "Chạm pad để bật nhịp, chạm lại để tắt. Pad mới vào ở đầu ô nhịp kế tiếp. Bấm ● để ghi thành clip.",
+            else "Beat gợi ý đang chạy sẵn. Chạm pad để thêm hoặc đổi nhịp, chạm lại để tắt; pad mới vào ở đầu ô nhịp kế tiếp. Bấm ● để ghi thành clip.",
             style = MaterialTheme.typography.bodySmall,
             color = cs.onSurfaceVariant,
         )

@@ -20,6 +20,7 @@ import com.bandstudio.app.model.PADS_PER_ROW
 import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.DEFAULT_KEY
 import com.bandstudio.app.model.PAD_COUNT
+import com.bandstudio.app.model.SoundCat
 import com.bandstudio.app.model.NoteEvent
 import com.bandstudio.app.model.PPQ
 import com.bandstudio.app.model.Project
@@ -301,9 +302,12 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         addTrack(Instrument.LOOPER, genre)
         val t = project?.tracks?.lastOrNull { it.instrument.isLooper } ?: return
         openLauncher(t.id)
+        // Đợi engine nhận bản nhạc mới (một vài buffer) rồi mới bật beat để không lỡ nhịp đầu.
+        starterAtNanos = System.nanoTime() + 250_000_000L
     }
 
     fun exitLauncher() {
+        starterAtNanos = 0L
         if (launcherRecording) finishLauncherRecording()
         AudioEngine.setPadRecording(false)
         stopPlayback()
@@ -333,14 +337,29 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             active && !queuedOff -> AudioEngine.padLaunch(idx, row, -1)
             else -> AudioEngine.padLaunch(idx, row, pad) // chưa chạy, hoặc đang chờ tắt -> huỷ lệnh tắt
         }
-        if (!playing) {
-            AudioEngine.play(0)
-            playing = true
-            playheadTick = 0
-            cursorTick = 0
-            graceUntilNanos = System.nanoTime() + 400_000_000L
-            if (launcherRecording) launcherRecStartTick = 0
+        startLauncherTransport()
+    }
+
+    private fun startLauncherTransport() {
+        if (playing) return
+        AudioEngine.play(0)
+        playing = true
+        playheadTick = 0
+        cursorTick = 0
+        graceUntilNanos = System.nanoTime() + 400_000_000L
+        if (launcherRecording) launcherRecStartTick = 0
+    }
+
+    // Beat gợi ý cho người mới: kick + hi-hat + bass (cột đầu, nhịp chính) chạy sẵn ngay khi mở track Looper mới.
+    private var starterAtNanos = 0L
+
+    private fun launchStarterBeat() {
+        val idx = launcherIndex()
+        if (idx < 0) return
+        for (row in intArrayOf(SoundCat.KICK.ordinal, SoundCat.HAT.ordinal, SoundCat.BASS.ordinal)) {
+            AudioEngine.padLaunch(idx, row, row * PADS_PER_ROW)
         }
+        startLauncherTransport()
     }
 
     fun launcherStopAll() {
@@ -369,6 +388,10 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     private fun pollLauncher() {
         val idx = launcherIndex()
         if (idx < 0) return
+        if (starterAtNanos != 0L && System.nanoTime() >= starterAtNanos) {
+            starterAtNanos = 0L
+            launchStarterBeat()
+        }
         padMask = AudioEngine.padMask(idx)
         while (AudioEngine.popPadEvent(eventBuf)) {
             if (launcherRecording && eventBuf[1] == idx && eventBuf[0] >= launcherRecStartTick) launcherEvents.add(eventBuf.copyOf())
