@@ -40,6 +40,7 @@ data class Patch(
     val chokeGroup: Int = 0,
     val gain: Float = 1f,
     val drive: Float = 0f,
+    val send: Float = 0f,           // 0..1: gửi vào reverb chung
     val sample: Int = -1,           // >= 0: ô mẫu âm thật trong engine (nếu nạp được); không thì dùng phần tổng hợp
 ) {
     /** Thứ tự phải khớp decodeSong: số thực nhân 1000; bursts và chokeGroup là số nguyên thô. */
@@ -48,7 +49,7 @@ data class Patch(
         out.add(q(toneAmp)); out.add(q(fStart)); out.add(q(fEnd)); out.add(q(pitchTauMs)); out.add(q(toneTauMs))
         out.add(q(noiseAmp)); out.add(q(noiseTauMs)); out.add(q(noiseHP)); out.add(q(noiseLP))
         out.add(bursts); out.add(q(burstGapMs)); out.add(q(tailTauMs)); out.add(q(tone2Ratio)); out.add(q(tone2Amp))
-        out.add(chokeGroup); out.add(q(gain)); out.add(q(drive)); out.add(sample)
+        out.add(chokeGroup); out.add(q(gain)); out.add(q(drive)); out.add(sample); out.add(q(send))
     }
 
     fun transposed(semitones: Int): Patch {
@@ -58,7 +59,7 @@ data class Patch(
     }
 
     companion object {
-        const val INTS = 18  // khớp kPatchInts
+        const val INTS = 19  // khớp kPatchInts
         val SILENT = Patch()
     }
 }
@@ -176,18 +177,36 @@ object Catalog {
 
     fun sound(id: String): Sound? = byId[id]
 
+    /** Xử lý "chung màu" theo thể loại: độ tối (bộ lọc thấp 0..1), hệ số âm lượng, lượng gửi reverb. */
+    data class Tone(val lowPass: Float, val gain: Float, val send: Float)
+
     /**
-     * Xử lý "chung màu" theo thể loại cho hàng Hi-hat và Percussion: mẫu thô sáng và to hơn kick/snare nên nghe tách rời.
-     * Trả (độ tối 0..1 cho bộ lọc thấp, hệ số âm lượng). Kick, snare, bass giữ nguyên.
+     * Mẫu thô của hi-hat, percussion sáng và to hơn kick/bass nên nghe tách rời; snare khô và to nhất bộ nên "lạc loài".
+     * Xử lý: hạ tiếng + làm tối hi-hat/percussion, hạ nhẹ snare và cho snare gửi vào reverb chung để dính vào bộ.
+     * Kick và bass giữ nguyên.
      */
-    fun toneFor(genreId: String, cat: SoundCat): Pair<Float, Float> {
-        val hat = cat == SoundCat.HAT
-        if (!hat && cat != SoundCat.PERC) return 0f to 1f
-        return when (genreId) {
-            "lofi" -> if (hat) 0.50f to 0.55f else 0.45f to 0.55f
-            "rnb", "ballad", "jazz", "acoustic" -> if (hat) 0.35f to 0.60f else 0.30f to 0.65f
-            "hiphop" -> if (hat) 0.40f to 0.62f else 0.35f to 0.68f
-            else -> if (hat) 0.15f to 0.70f else 0.10f to 0.75f
+    fun toneFor(genreId: String, cat: SoundCat): Tone {
+        val soft = genreId == "rnb" || genreId == "ballad" || genreId == "jazz" || genreId == "acoustic"
+        return when (cat) {
+            SoundCat.HAT -> when {
+                genreId == "lofi" -> Tone(0.50f, 0.55f, 0f)
+                soft -> Tone(0.35f, 0.60f, 0f)
+                genreId == "hiphop" -> Tone(0.40f, 0.62f, 0f)
+                else -> Tone(0.15f, 0.70f, 0f)
+            }
+            SoundCat.PERC -> when {
+                genreId == "lofi" -> Tone(0.45f, 0.55f, 0.15f)
+                soft -> Tone(0.30f, 0.65f, 0.15f)
+                genreId == "hiphop" -> Tone(0.35f, 0.68f, 0.12f)
+                else -> Tone(0.10f, 0.75f, 0.10f)
+            }
+            SoundCat.SNARE -> when {
+                genreId == "lofi" -> Tone(0.40f, 0.80f, 0.45f)
+                soft -> Tone(0.25f, 0.85f, 0.40f)
+                genreId == "hiphop" -> Tone(0.20f, 0.85f, 0.35f)
+                else -> Tone(0.10f, 0.90f, 0.30f)
+            }
+            else -> Tone(0f, 1f, 0f)
         }
     }
 
@@ -196,8 +215,8 @@ object Catalog {
         val p = patchFor(pad)
         if (p.sample < 0) return p
         val cat = SoundCat.entries.getOrNull(index / PADS_PER_ROW) ?: return p
-        val (lp, g) = toneFor(genreId, cat)
-        return if (lp == 0f && g == 1f) p else p.copy(noiseLP = lp, gain = p.gain * g)
+        val t = toneFor(genreId, cat)
+        return p.copy(noiseLP = t.lowPass, gain = p.gain * t.gain, send = t.send)
     }
 
     /** Thông số của pad; âm không còn trong danh mục (dự án cũ) sẽ im lặng thay vì lỗi. */

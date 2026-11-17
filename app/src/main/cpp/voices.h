@@ -86,6 +86,7 @@ struct Voice {
     float t2Ratio = 0.0f, t2Amp = 0.0f;
     double phase2 = 0.0;
     int chokeGroup = 0;
+    float send = 0.0f;  // phần tín hiệu gửi vào reverb chung
     // Mẫu âm thật (pad Looper): con trỏ chỉ đọc, đọc với nội suy tuyến tính theo tỉ lệ sample rate.
     const float* smpData = nullptr;
     int smpLen = 0;
@@ -240,6 +241,7 @@ inline void Voice::start(Inst inst, int midiNote, int velocity, int sampleRate, 
     lpState = 0.0f;
     t2Amp = t2Ratio = 0.0f;
     chokeGroup = 0;
+    send = 0.0f;
     smpData = nullptr;
 
     if (inst == Inst::Piano || inst == Inst::Bass) {
@@ -381,6 +383,7 @@ inline void Voice::startPatch(const Patch& p, const Sample* smp, int padIndex, i
     gain = vel * std::clamp(p.gain, 0.0f, 2.0f);
     drive = std::clamp(p.drive, 0.0f, 12.0f);
     chokeGroup = std::clamp(p.chokeGroup, 0, 255);
+    send = std::clamp(p.send, 0.0f, 1.0f);
 
     const float fMax = static_cast<float>(0.45 * sr);
     toneAmp = amp(p.toneAmp);

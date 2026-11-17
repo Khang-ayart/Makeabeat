@@ -65,6 +65,7 @@ Song* decodeSong(const int32_t* d, int n) {
             p.gain = f(d[i + 15]);
             p.drive = f(d[i + 16]);
             p.sample = d[i + 17];
+            p.send = std::clamp(static_cast<float>(d[i + 18]) / 1000.0f, 0.0f, 1.0f);
             td.kit.push_back(p);
         }
         const int padCount = d[i++];
@@ -531,8 +532,12 @@ void EngineCore::render(float* out, int numFrames) noexcept {
         if (playing_) advanceTransport(metronome);
 
         float bus[kMaxTracks] = {};
+        float send = 0.0f;
         for (auto& v : voices_) {
-            if (v.active) bus[v.track] += v.render(table_);
+            if (!v.active) continue;
+            const float s = v.render(table_);
+            bus[v.track] += s;
+            send += s * v.send;
         }
 
         float left = 0.0f, right = 0.0f;
@@ -551,7 +556,7 @@ void EngineCore::render(float* out, int numFrames) noexcept {
             left += c;
             right += c;
         }
-        if (fxOn) fx_.process(left, right, fxWet);
+        if (fxOn) fx_.process(left, right, fxWet, send);
         left = softClip(left * kMasterGain);
         right = softClip(right * kMasterGain);
 

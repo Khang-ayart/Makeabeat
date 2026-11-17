@@ -33,8 +33,8 @@ public:
     }
 
     // wet: lượng reverb trộn thêm (0..1); thông số cố định đủ cho "căn phòng nhỏ".
-    inline void process(float& l, float& r, float wet) noexcept {
-        const float in = (l + r) * 0.5f * 0.03f;
+    inline void process(float& l, float& r, float wet, float send = 0.0f) noexcept {
+        const float in = ((l + r) * 0.5f + send * kSendGain) * 0.03f;
         float wl = 0.0f, wr = 0.0f;
         for (int i = 0; i < kCombs; ++i) {
             wl += comb_[0][i].tick(in);
@@ -66,6 +66,7 @@ public:
 private:
     static constexpr int kCombs = 8;
     static constexpr int kAps = 4;
+    static constexpr float kSendGain = 2.5f;  // gửi riêng mạnh hơn đường chung
     static constexpr float kThresh = 0.2f;   // ~ -14 dBFS
     static constexpr float kRatio = 3.0f;
     static constexpr float kMakeup = 1.25f;  // bù ~ +2 dB

@@ -273,6 +273,10 @@ class ModelTest {
         assertTrue(hat.gain < 0.7f && hat.noiseLP >= 0.4f)
         assertTrue(perc.gain < 0.7f && perc.noiseLP >= 0.4f)
         assertTrue(hat.sample >= 0 && perc.sample >= 0)
+        // Snare: hạ nhẹ, làm tối chút và gửi reverb; kick/bass không gửi.
+        val snare = Catalog.patchFor("lofi", PADS_PER_ROW, kit[PADS_PER_ROW])
+        assertTrue(snare.send > 0.2f && snare.gain < 1f && snare.gain > 0.6f)
+        assertEquals(0f, kick.send, 0f)
     }
 
     // ---- Mẫu âm thật ----

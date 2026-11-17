@@ -694,7 +694,7 @@ static std::array<int32_t, kPatchInts> P(float toneAmp, float fS, float fE, floa
                                          float drive) {
     auto q = [](float v) { return static_cast<int32_t>(std::lround(v * 1000.0f)); };
     return {q(toneAmp), q(fS),  q(fE),  q(pitchTau), q(toneTau), q(noiseAmp), q(noiseTau), q(hp), q(lp),
-            bursts * 1000, q(gap), q(tail), q(t2r),  q(t2a),  choke * 1000, q(gain), q(drive), -1};
+            bursts * 1000, q(gap), q(tail), q(t2r),  q(t2a),  choke * 1000, q(gain), q(drive), -1, 0};
 }
 // decodeSong đọc chokeGroup trực tiếp (không nhân 1000); P() nhân để mọi trường cùng một quy ước, nên sửa lại ở đây.
 static std::array<int32_t, kPatchInts> PI(std::array<int32_t, kPatchInts> a) {
@@ -1052,6 +1052,21 @@ static void testMasterFx() {
     const float tail = diffPeak(4800 + 12000, 18000);
     CHECK(tail > 0.004f, "no reverb tail (%f)", tail);
     CHECK(diffPeak(4800 + 88000, 3000) < 0.05f * tail + 1e-5f, "reverb tail does not decay (%f vs %f)", diffPeak(4800 + 88000, 3000), tail);
+    // Gửi reverb riêng: pad có send > 0 cho đuôi reverb lớn hơn pad không gửi (cùng mẫu, cùng độ to).
+    auto sendRun = [&](int send1000) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        core->setMasterFx(true, 0.2f);
+        const auto smp = rampSample(2400);
+        core->loadSample(0, smp.data(), 2400, 48000);
+        auto patch = samplePatch(0, 0.3f);
+        patch[18] = send1000;
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, Kit{patch})}));
+        renderAll(*core, 1, 64, 64);
+        core->noteOn(static_cast<int>(Inst::Looper), 0, 0, 127);
+        return renderAll(*core, 1, 24000, 480);
+    };
+    const auto s0 = sendRun(0), s1 = sendRun(1000);
+    CHECK(peak(s1, 3000, 20000) > 1.5f * peak(s0, 3000, 20000) + 1e-5f, "send did not raise reverb (%f vs %f)", peak(s1, 3000, 20000), peak(s0, 3000, 20000));
     // Nén: nốt to + nhiều voice bị hạ so với không nén.
     auto loud = [&](bool fx) {
         auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
