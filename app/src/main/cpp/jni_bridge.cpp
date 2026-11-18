@@ -92,6 +92,12 @@ JNIEXPORT jboolean JNICALL JNI_FN(loadSample)(JNIEnv* env, jobject, jint id, jfl
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+// Đăng ký vùng phát của nhạc cụ có cao độ (gọi sau khi nạp mẫu, trước khi phát).
+JNIEXPORT jboolean JNICALL JNI_FN(addZone)(JNIEnv*, jobject, jint inst, jint sample, jint root, jint lo, jint hi,
+                                            jint velLo, jint velHi, jfloat gain) {
+    return gEngine && gEngine->core().addZone(inst, sample, root, lo, hi, velLo, velHi, gain) ? JNI_TRUE : JNI_FALSE;
+}
+
 // ---- Looper: pad nhịp lặp ----
 JNIEXPORT jboolean JNICALL JNI_FN(padLaunch)(JNIEnv*, jobject, jint track, jint row, jint pad) {
     return gEngine && gEngine->core().padLaunch(track, row, pad) ? JNI_TRUE : JNI_FALSE;

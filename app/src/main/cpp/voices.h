@@ -42,7 +42,7 @@ struct Rng {
 };
 
 struct Voice {
-    enum class Kind : uint8_t { Harmonic, Pluck, Drum };
+    enum class Kind : uint8_t { Harmonic, Pluck, Drum, Sampled };
     static constexpr int kHarmonics = 4;
     static constexpr int kMaxDelay = 2048;
 
@@ -97,6 +97,26 @@ struct Voice {
     void startPatch(const Patch& p, const Sample* smp, int padIndex, int velocity, int sampleRate,
                     uint64_t startOrder, uint64_t seed);
 
+    // Nhạc cụ có cao độ phát từ mẫu thật: đọc với tỉ lệ ratio (2^(nửa cung/12)) so với nốt gốc của mẫu.
+    void startSampled(const Sample& smp, double ratio, float zoneGain, int midiNote, int velocity, int sampleRate,
+                      uint64_t startOrder) {
+        active = true;
+        releasing = false;
+        kind = Kind::Sampled;
+        note = midiNote;
+        order = startOrder;
+        endTick = -1;
+        release = 1.0f;
+        smpData = smp.data.data();
+        smpLen = static_cast<int>(smp.data.size());
+        smpPos = 0.0;
+        smpInc = static_cast<double>(smp.sampleRate) / sampleRate * ratio;
+        const float vel = static_cast<float>(std::clamp(velocity, 1, 127)) / 127.0f;
+        gain = zoneGain * (0.45f + 0.55f * vel);
+        attack = 0.0f;
+        attackInc = static_cast<float>(1.0 / (0.002 * sampleRate));
+    }
+
     void beginRelease(float coef) noexcept {
         if (!active || releasing) return;
         releasing = true;
@@ -109,6 +129,7 @@ struct Voice {
         switch (kind) {
             case Kind::Harmonic: s = renderHarmonic(tbl); break;
             case Kind::Pluck: s = renderPluck(); break;
+            case Kind::Sampled: s = renderSampled(); break;
             default: s = renderDrum(tbl); break;
         }
         if (attack < 1.0f) {
@@ -126,6 +147,18 @@ struct Voice {
     }
 
 private:
+    inline float renderSampled() noexcept {
+        const int i0 = static_cast<int>(smpPos);
+        if (!smpData || i0 + 1 >= smpLen) {
+            active = false;
+            return 0.0f;
+        }
+        const float fr = static_cast<float>(smpPos - i0);
+        const float out = smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr;
+        smpPos += smpInc;
+        return out;
+    }
+
     inline float renderHarmonic(const SineTable& tbl) noexcept {
         float sum = 0.0f;
         for (int h = 0; h < kHarmonics; ++h) {

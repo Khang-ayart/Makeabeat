@@ -952,7 +952,7 @@ static void testSamplerPlaysAndEnds() {
     const auto smp = rampSample(4800);  // 0,1 s ở 48 kHz
     CHECK(core->loadSample(0, smp.data(), 4800, 48000), "load failed");
     CHECK(!core->loadSample(0, smp.data(), 4800, 48000), "slot overwritten");
-    CHECK(!core->loadSample(-1, smp.data(), 4800, 48000) && !core->loadSample(64, smp.data(), 4800, 48000), "bad id accepted");
+    CHECK(!core->loadSample(-1, smp.data(), 4800, 48000) && !core->loadSample(256, smp.data(), 4800, 48000), "bad id accepted");
     CHECK(!core->loadSample(1, nullptr, 0, 48000), "null accepted");
     publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {{960, 240, 0, 127}}, Kit{samplePatch(0)})}));
     core->play(0);
@@ -981,6 +981,48 @@ static void testSamplerResamplesAndFallsBack() {
     core->noteOn(static_cast<int>(Inst::Looper), 0, 1, 127);  // mẫu 7 chưa nạp
     const auto b = renderAll(*core, 1, 2400, 480);
     CHECK(peak(b, 0, b.size()) > 0.05f, "fallback synth silent");
+}
+
+static std::vector<float> sineSample(double freq, int rate, int n, float amp) {
+    std::vector<float> v(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) v[static_cast<size_t>(i)] = amp * static_cast<float>(std::sin(2.0 * 3.14159265358979 * freq * i / rate));
+    return v;
+}
+
+static void testZonesPitchVelocityAndFallback() {
+    begin("Zone: nốt cao hơn gốc phát nhanh đúng tỉ lệ, chọn lớp velocity, nhả khi noteOff, nốt ngoài vùng dùng tổng hợp");
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    const auto soft = sineSample(440.0, 48000, 48000, 0.2f);
+    const auto loud = sineSample(440.0, 48000, 48000, 0.8f);
+    CHECK(core->loadSample(10, soft.data(), 48000, 48000) && core->loadSample(11, loud.data(), 48000, 48000), "load");
+    CHECK(core->addZone(0, 10, 69, 60, 80, 1, 63, 1.0f) && core->addZone(0, 11, 69, 60, 80, 64, 127, 1.0f), "addZone");
+    CHECK(!core->addZone(0, 300, 69, 0, 127, 1, 127, 1.0f) && !core->addZone(99, 10, 69, 0, 127, 1, 127, 1.0f), "bad zone accepted");
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Piano, {})}));
+    renderAll(*core, 1, 64, 64);
+    // Nốt 81 (cao hơn gốc 69 một quãng tám) phải ra 880 Hz.
+    core->noteOn(static_cast<int>(Inst::Piano), 0, 81, 127);
+    const auto a = renderAll(*core, 1, 24000, 480);
+    const int zc = zeroCrossings(a, 2000, 22000);  // 20000 khung = 0,4167 s
+    CHECK(std::abs(zc - 880 * 20000 / 48000) <= 2, "880Hz expected, crossings=%d", zc);
+    const float pLoud = peak(a, 2000, 4000);
+    core->allNotesOff();
+    renderAll(*core, 1, 24000, 480);
+    core->noteOn(static_cast<int>(Inst::Piano), 0, 69, 40);
+    const auto b = renderAll(*core, 1, 4800, 480);
+    const float pSoft = peak(b, 1000, 3000);
+    CHECK(pLoud > 2.0f * pSoft, "velocity layers not selected (%f vs %f)", pLoud, pSoft);
+    // noteOff: tắt dần trong ~0,12 s rồi im lặng.
+    core->noteOff(0, 69);
+    const auto c = renderAll(*core, 1, 24000, 480);
+    CHECK(peak(c, 12000, 10000) == 0.0f, "voice not released");
+    // Ngoài vùng [60, 80] dùng tổng hợp cũ, vẫn có tiếng.
+    core->noteOn(static_cast<int>(Inst::Piano), 0, 40, 100);
+    const auto d = renderAll(*core, 1, 4800, 480);
+    CHECK(peak(d, 0, d.size()) > 0.01f, "fallback synth silent");
+    // Mẫu ngắn tự kết thúc, không treo voice.
+    core->allNotesOff();
+    renderAll(*core, 1, 96000, 480);
+    CHECK(core->activeVoiceCount() == 0, "voices stuck");
 }
 
 static void testSamplerBitExactAndBounded() {
@@ -1085,6 +1127,7 @@ int main() {
     testSamplerPlaysAndEnds();
     testSamplerResamplesAndFallsBack();
     testSamplerBitExactAndBounded();
+    testZonesPitchVelocityAndFallback();
     testKeyboardPadPitchAndRelease();
     testKeyboardNotesInClip();
 

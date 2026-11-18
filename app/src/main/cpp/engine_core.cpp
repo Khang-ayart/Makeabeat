@@ -168,6 +168,23 @@ bool EngineCore::loadSample(int id, const float* data, int count, int sampleRate
     return true;
 }
 
+bool EngineCore::addZone(int inst, int sample, int root, int lo, int hi, int velLo, int velHi, float gain) {
+    if (inst < 0 || inst >= kInstCount || sample < 0 || sample >= kMaxSamples) return false;
+    const int n = zoneCount_[inst].load(std::memory_order_relaxed);
+    if (n >= kMaxZones) return false;
+    Zone z;
+    z.sample = sample;
+    z.root = std::clamp(root, 0, 127);
+    z.lo = std::clamp(lo, 0, 127);
+    z.hi = std::clamp(hi, z.lo, 127);
+    z.velLo = std::clamp(velLo, 1, 127);
+    z.velHi = std::clamp(velHi, z.velLo, 127);
+    z.gain = std::clamp(gain, 0.0f, 4.0f);
+    zones_[inst][n] = z;
+    zoneCount_[inst].store(n + 1, std::memory_order_release);  // vùng đã ghi xong mới công bố
+    return true;
+}
+
 void EngineCore::publishSong(Song* song) {
     Song* r = nullptr;
     while (retired_.pop(r)) delete r;  // giải phóng bản cũ mà luồng âm thanh đã trả về
@@ -405,6 +422,27 @@ void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_
             if (v.active && !v.releasing && v.kind == Voice::Kind::Drum && v.track == track && v.piece == kHatOpen) {
                 v.beginRelease(chokeCoef_);
             }
+        }
+    }
+    if (!isDrum(inst) && inst != Inst::Looper) {  // nhạc cụ có cao độ: thử phát mẫu thật trước
+        const int ii = static_cast<int>(inst);
+        const int zc = ii >= 0 && ii < kInstCount ? zoneCount_[ii].load(std::memory_order_acquire) : 0;
+        const Zone* best = nullptr;
+        for (int i = 0; i < zc; ++i) {
+            const Zone& z = zones_[ii][i];
+            if (note < z.lo || note > z.hi || velocity < z.velLo || velocity > z.velHi) continue;
+            if (!best || std::abs(note - z.root) < std::abs(note - best->root)) best = &z;  // gần gốc nhất: ít bị méo âm sắc
+        }
+        const Sample* smp = best ? samples_[best->sample].load(std::memory_order_acquire) : nullptr;
+        if (smp) {
+            Voice* sv = allocateVoice();
+            if (!sv) return;
+            sv->startSampled(*smp, std::pow(2.0, (note - best->root) / 12.0), best->gain, note, velocity, sampleRate_,
+                             ++voiceCounter_);
+            sv->track = static_cast<uint8_t>(track);
+            sv->seq = seq;
+            sv->endTick = endTick;
+            return;
         }
     }
     Voice* v = allocateVoice();

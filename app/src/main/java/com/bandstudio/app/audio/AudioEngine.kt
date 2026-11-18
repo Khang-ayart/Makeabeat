@@ -38,6 +38,7 @@ object AudioEngine {
 
     /** Nạp mẫu âm thật vào ô [id] (mono float [-1,1]); mỗi ô chỉ nạp được một lần. Gọi được từ luồng nền. */
     external fun loadSample(id: Int, data: FloatArray, sampleRate: Int): Boolean
+    external fun addZone(inst: Int, sample: Int, root: Int, lo: Int, hi: Int, velLo: Int, velHi: Int, gain: Float): Boolean
 
     // ---- Looper: pad nhịp lặp ----
     /** Bật pad (>= 0) hoặc tắt hàng (-1). Có hiệu lực ở đầu ô nhịp kế tiếp. Trả false nếu hàng/pad sai. */
