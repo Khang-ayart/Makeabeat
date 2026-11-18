@@ -334,6 +334,19 @@ class ModelTest {
     }
 
     @Test
+    fun crashPadsGetAnImpactAtPhraseStartAndEveryGenreHasASynthStyle() {
+        for (g in Catalog.genres) {
+            assertTrue("${g.id}: giọng synth", Patterns.synthStyleOf(g.id) in 1..3)
+            for (pad in 0 until com.bandstudio.app.model.KIT_COUNT) {
+                val hits = Patterns.padHits(g, com.bandstudio.app.model.DEFAULT_KEY, pad)
+                val isCrash = pad / PADS_PER_ROW == SoundCat.PERC.ordinal && g.kit()[pad].soundId.contains("crash")
+                if (isCrash) assertTrue("${g.id}/$pad thiếu impact", hits.any { it.tick == 0 })
+                assertTrue(hits.all { it.tick in 0 until Patterns.lenTicks(pad) })
+            }
+        }
+    }
+
+    @Test
     fun drumPhrasesRepeatBaseBarsAndEndWithAFillInsideTheLoop() {
         for (g in Catalog.genres) for (pad in 0 until com.bandstudio.app.model.KIT_COUNT) {
             val base = Patterns.hits(g.family, pad)

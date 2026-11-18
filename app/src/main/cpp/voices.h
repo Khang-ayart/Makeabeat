@@ -99,6 +99,7 @@ struct Voice {
     float synEnv = 1.0f, synSus = 1.0f, synDec = 1.0f;  // envelope biên độ: từ 1 tắt dần về synSus
     float synFc = 1000.0f, synFcExtra = 0.0f, synFcDec = 1.0f, synK = 0.0f;  // cutoff = synFc + synFcExtra (tắt dần)
     float synF1 = 0.0f, synF2 = 0.0f;         // trạng thái bộ lọc
+    uint8_t synStyle = 0;                     // 0 mặc định, 1 sáng (pop/edm), 2 mềm tối (lofi/jazz/rnb), 3 gắt ngắn (trap/drill)
     float synRel = 0.0f;                      // hệ số nhả riêng (pad nhả chậm hơn)
     float smpLp = 0.0f;  // trạng thái bộ lọc thấp cho mẫu (làm tối hi-hat/percussion theo thể loại)
 
@@ -342,7 +343,13 @@ inline void Voice::start(Inst inst, int midiNote, int velocity, int sampleRate, 
     } else if (inst == Inst::SynthLead || inst == Inst::SynthPad) {
         kind = Kind::Synth;
         const bool pad = inst == Inst::SynthPad;
-        const double det[3] = {1.0, 1.0 + (pad ? 0.0070 : 0.0045), 1.0 - (pad ? 0.0070 : 0.0045)};
+        // Giọng theo thể loại: nhân cutoff, độ lệch dây (detune), thời gian vào, độ ngân.
+        float fcMul = 1.0f, extraMul = 1.0f, detMul = 1.0f, atkMul = 1.0f, susMul = 1.0f, relMul = 1.0f;
+        if (synStyle == 1) { fcMul = 1.35f; extraMul = 1.25f; detMul = 1.4f; susMul = 1.2f; }
+        else if (synStyle == 2) { fcMul = 0.6f; extraMul = 0.5f; detMul = 0.7f; atkMul = 1.5f; relMul = 1.3f; }
+        else if (synStyle == 3) { fcMul = 0.85f; extraMul = 1.1f; detMul = 0.8f; atkMul = 0.7f; susMul = 0.6f; relMul = 1.1f; }
+        const double dd = (pad ? 0.0070 : 0.0045) * detMul;
+        const double det[3] = {1.0, 1.0 + dd, 1.0 - dd};
         for (int o = 0; o < 3; ++o) {
             synInc[o] = std::min(0.45, freq * det[o] / sr);
             synPh[o] = 0.31 * o;  // pha lệch cố định: mỗi lần phát giống hệt nhau (vòng lặp khớp từng bit)
@@ -354,25 +361,25 @@ inline void Voice::start(Inst inst, int midiNote, int velocity, int sampleRate, 
         synK = static_cast<float>(2.0 * kPi / sr);
         synEnv = 1.0f;
         if (pad) {            // nền: vào chậm, lọc tối, ngân dài, nhả chậm
-            synFc = 900.0f + 700.0f * vel;
+            synFc = (900.0f + 700.0f * vel) * fcMul;
             synFcExtra = 0.0f;
             synFcDec = 1.0f;
             synSus = 1.0f;
             synDec = 1.0f;
-            synRel = dec(0.55);
+            synRel = dec(0.55 * relMul);
             gain = 0.10f * (0.6f + 0.4f * vel);
             attack = 0.0f;
-            attackInc = static_cast<float>(1.0 / (0.30 * sr));
+            attackInc = static_cast<float>(1.0 / (0.30 * atkMul * sr));
         } else {              // lead/arp: "tách" nhanh, cutoff trượt xuống, ngân vừa, nhả ngắn
-            synFc = 1300.0f + 500.0f * vel;
-            synFcExtra = 4200.0f * vel;
+            synFc = (1300.0f + 500.0f * vel) * fcMul;
+            synFcExtra = 4200.0f * vel * extraMul;
             synFcDec = dec(0.16);
-            synSus = 0.45f;
+            synSus = std::min(0.9f, 0.45f * susMul);
             synDec = dec(0.30);
-            synRel = dec(0.09);
+            synRel = dec(0.09 * relMul);
             gain = 0.20f * (0.5f + 0.5f * vel);
             attack = 0.0f;
-            attackInc = static_cast<float>(1.0 / (0.004 * sr));
+            attackInc = static_cast<float>(1.0 / (0.004 * atkMul * sr));
         }
     } else if (inst == Inst::AcousticGuitar || inst == Inst::ElectricGuitar) {
         kind = Kind::Pluck;

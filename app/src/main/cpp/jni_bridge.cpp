@@ -81,6 +81,9 @@ JNIEXPORT void JNICALL JNI_FN(allNotesOff)(JNIEnv*, jobject) {
     if (gEngine) gEngine->core().allNotesOff();
 }
 
+JNIEXPORT void JNICALL JNI_FN(setSynthStyle)(JNIEnv*, jobject, jint track, jint style) {
+    if (gEngine) gEngine->core().setSynthStyle(track, style);
+}
 JNIEXPORT void JNICALL JNI_FN(setMasterFx)(JNIEnv*, jobject, jboolean on, jfloat wet) {
     if (gEngine) gEngine->core().setMasterFx(on == JNI_TRUE, wet);
 }

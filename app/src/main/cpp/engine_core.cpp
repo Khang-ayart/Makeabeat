@@ -471,6 +471,7 @@ void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_
     }
     Voice* v = allocateVoice();
     if (!v) return;
+    v->synStyle = static_cast<uint8_t>(synStyle_[track].load(std::memory_order_relaxed));
     v->start(inst, note, velocity, sampleRate_, ++voiceCounter_, seed);
     v->track = static_cast<uint8_t>(track);
     v->seq = seq;

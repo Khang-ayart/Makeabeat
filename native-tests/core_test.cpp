@@ -1166,6 +1166,29 @@ static void testKeyboardPadPitchAndRelease() {
     CHECK(peak(out, 96000, 2000) > 0.02f, "second chord missing");
 }
 
+static void testSynthStyles() {
+    begin("Giọng synth theo thể loại: sáng > mặc định > mềm tối về năng lượng cao tần; mỗi giọng lặp giống hệt từng bit, không vượt biên");
+    auto run = [&](int style) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        core->setSynthStyle(0, style);
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {{0, 1920, 256 + 69, 110}}, testKit())}));
+        core->play(0);
+        return renderAll(*core, 1, 48000 * 2, 480);
+    };
+    auto hf = [](const std::vector<float>& x) {  // năng lượng của phần sai phân (cao tần)
+        double e = 0;
+        for (size_t i = 1; i < 30000 && i < x.size(); ++i) { const double d = x[i] - x[i - 1]; e += d * d; }
+        return e;
+    };
+    const auto bright = run(1), normal = run(0), soft = run(2), hard = run(3);
+    CHECK(hf(bright) > hf(normal) && hf(normal) > hf(soft), "brightness order %g %g %g", hf(bright), hf(normal), hf(soft));
+    CHECK(run(1) == bright && run(2) == soft && run(3) == hard, "style not deterministic");
+    bool ok = true;
+    for (const auto* v : {&bright, &soft, &hard}) for (float x : *v) if (!(x >= -1.0f && x <= 1.0f)) ok = false;
+    CHECK(ok, "style out of range");
+    CHECK(peak(hard, 0, 24000) > 0.02f, "hard style silent");
+}
+
 static void testSynthRows() {
     begin("Synth: lead đúng cao độ, pad vào chậm và nhả chậm, kết thúc sạch, không vượt biên, lặp giống hệt từng bit");
     // Lead A4 (mã 256 + 69) qua clip của track Looper.
@@ -1338,6 +1361,7 @@ int main() {
     testKeyboardPadPitchAndRelease();
     testKeyboardNotesInClip();
     testSynthRows();
+    testSynthStyles();
     testLooperMix();
     testPitchedSampleAndVary();
 

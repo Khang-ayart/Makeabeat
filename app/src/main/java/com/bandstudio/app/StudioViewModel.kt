@@ -135,6 +135,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun publishSong() {
         val p = project ?: return
+        for (i in 0 until MAX_TRACKS) AudioEngine.setSynthStyle(i, Patterns.synthStyleOf(p.tracks.getOrNull(i)?.genreId ?: ""))
         val s = screen
         if (s is Screen.Launcher) { // chạy tự do, không có vùng lặp: pad tự lặp theo từng ô nhịp
             AudioEngine.setSong(p.encodeForEngine(false, 0, 0, 0, launcherTrackId = s.trackId))

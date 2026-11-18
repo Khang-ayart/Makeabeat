@@ -256,7 +256,15 @@ object Patterns {
 
     /** Tất cả cú đánh của một pad (trống/bass/hợp âm) để gửi engine. */
     fun padHits(genre: Genre, key: Int, pad: Int): List<Hit> =
-        if (isKeyPad(pad)) melodicHits(genre.family, pad, key, genre.minor) else swung(phrase(genre.family, pad), swingOf(genre.id))
+        if (isKeyPad(pad)) melodicHits(genre.family, pad, key, genre.minor) else swung(withImpact(genre, pad, phrase(genre.family, pad)), swingOf(genre.id))
+
+    /** Pad crash: thêm một cú crash vào đầu mỗi cụm 4 ô nhịp (điểm chuyển đoạn) nếu nhịp gốc chưa có cú nào ở đó. */
+    private fun withImpact(genre: Genre, pad: Int, ph: List<Hit>): List<Hit> {
+        if (pad / PADS_PER_ROW != SoundCat.PERC.ordinal) return ph
+        val id = genre.kit().getOrNull(pad)?.soundId ?: return ph
+        if (!id.contains("crash") || ph.any { it.tick == 0 }) return ph
+        return (listOf(Hit(0, 112, pad, 2 * STEP_TICKS)) + ph).sortedBy { it.tick }
+    }
 
     /** Độ lệch velocity ổn định (không ngẫu nhiên) theo vị trí, để mỗi ô nhịp nhấn hơi khác nhau mà vòng lặp vẫn khớp từng bit. */
     private fun jitter(pad: Int, bar: Int, tick: Int): Int = Math.floorMod(pad * 31 + bar * 17 + (tick / STEP_TICKS) * 7, 9) - 4
@@ -379,6 +387,14 @@ object Patterns {
             for (note in voicing) out.add(Hit(bar * BAR_TICKS, 72, ATMOS_NOTE_BASE + note, BAR_TICKS - 80))
         }
         return out
+    }
+
+    /** Giọng synth theo thể loại: 1 sáng (pop, EDM, latin, afro, rock), 2 mềm tối (lo-fi, jazz, R&B, ballad, acoustic), 3 gắt ngắn (trap, drill, hip-hop, melodic). */
+    fun synthStyleOf(genreId: String): Int = when (genreId) {
+        "pop", "edm", "latin", "afro", "rock" -> 1
+        "lofi", "jazz", "rnb", "ballad", "acoustic" -> 2
+        "trap", "drill", "hiphop", "melodic" -> 3
+        else -> 0
     }
 
     /** Độ swing (0..0,5) theo thể loại: phần của một bước 1/16 mà nốt lẻ bị trễ. 0 = thẳng hàng. */

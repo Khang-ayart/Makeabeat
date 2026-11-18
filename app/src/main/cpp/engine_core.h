@@ -44,6 +44,10 @@ public:
         fxWet_.store(std::clamp(wet, 0.0f, 1.0f), std::memory_order_relaxed);
         fxOn_.store(on, std::memory_order_relaxed);
     }
+    // Giọng synth của track Looper theo thể loại (0 mặc định, 1 sáng, 2 mềm tối, 3 gắt ngắn).
+    void setSynthStyle(int track, int style) noexcept {
+        if (track >= 0 && track < kMaxTracks) synStyle_[track].store(std::clamp(style, 0, 3), std::memory_order_relaxed);
+    }
     void setTrackMix(int track, float volume, float pan, bool mute, bool solo) noexcept;
     void publishSong(Song* song);  // nhận quyền sở hữu
     bool play(int fromTick) noexcept;
@@ -107,6 +111,7 @@ private:
 
     std::atomic<float> bpm_{120.0f};
     std::atomic<bool> metronome_{true};
+    std::atomic<int> synStyle_[kMaxTracks] = {};
     std::atomic<bool> fxOn_{false};
     std::atomic<float> fxWet_{0.0f};
     MasterFx fx_;
