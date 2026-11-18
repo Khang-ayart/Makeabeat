@@ -88,7 +88,7 @@ struct Zone {
     float gain = 1.0f;
 };
 struct Sample {
-    std::vector<float> data;
+    std::vector<int16_t> data;
     int sampleRate = 44100;
 };
 

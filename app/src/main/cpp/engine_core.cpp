@@ -159,8 +159,10 @@ void EngineCore::setTrackMix(int track, float volume, float pan, bool mute, bool
 bool EngineCore::loadSample(int id, const float* data, int count, int sampleRate) {
     if (id < 0 || id >= kMaxSamples || !data || count < 2 || count > 48000 * 20 || sampleRate < 8000) return false;
     auto* s = new Sample();
-    s->data.assign(data, data + count);
-    for (float& x : s->data) x = std::clamp(x, -1.0f, 1.0f);
+    s->data.resize(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        s->data[static_cast<size_t>(i)] = static_cast<int16_t>(std::lrint(std::clamp(data[i], -1.0f, 1.0f) * 32767.0f));
+    }
     s->sampleRate = sampleRate;
     const Sample* expected = nullptr;
     if (!samples_[id].compare_exchange_strong(expected, s, std::memory_order_acq_rel)) {

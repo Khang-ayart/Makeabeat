@@ -364,6 +364,38 @@ class ModelTest {
         assertTrue("ít biến hóa: ${seen.size}", seen.size > 50)
     }
 
+    @Test
+    fun instrumentManifestIsConsistentAndFilesExist() {
+        val sets = com.bandstudio.app.model.Instruments.parse(java.io.File("src/main/assets/instruments/manifest.json").readText())
+        assertEquals(setOf(0, 1, 2, 3), sets.map { it.inst }.toSet())
+        var slots = com.bandstudio.app.model.Instruments.FIRST_SLOT
+        for (set in sets) {
+            assertTrue(set.gain in 0.1f..1.5f)
+            assertTrue("${set.name}: ít vùng", set.zones.size >= 12)
+            slots += set.zones.size
+            for (layer in set.zones.groupBy { it.velLo to it.velHi }.values) {
+                // Trong một lớp velocity, các vùng nối liền nhau và phủ kín 0..127, không chồng lấn.
+                val sorted = layer.sortedBy { it.lo }
+                assertEquals(0, sorted.first().lo)
+                assertEquals(127, sorted.last().hi)
+                for (i in 1 until sorted.size) assertEquals(sorted[i - 1].hi + 1, sorted[i].lo)
+                for (z in sorted) assertTrue("${z.file}: gốc ${z.root} ngoài vùng", z.root in z.lo..z.hi)
+            }
+            assertEquals("${set.name}: lớp velocity phủ 1..127", setOf(1, 127), setOf(set.zones.minOf { it.velLo }, set.zones.maxOf { it.velHi }))
+            for (z in set.zones) {
+                val f = java.io.File("src/main/assets/instruments/${z.file}")
+                assertTrue("thiếu ${f.path}", f.exists())
+                val wav = com.bandstudio.app.model.Wav.parse(f.readBytes())
+                assertTrue("${z.file}: không đọc được", wav != null)
+                assertEquals(44100, wav!!.sampleRate)
+                assertTrue("${z.file}: độ dài ${wav.samples.size}", wav.samples.size in 20000..(44100 * 7))
+                val peak = wav.samples.maxOf { kotlin.math.abs(it) }
+                assertTrue("${z.file}: biên độ $peak", peak in 0.3f..1.0f)
+            }
+        }
+        assertTrue("quá nhiều ô mẫu: $slots", slots <= 256)  // kMaxSamples của engine
+    }
+
     // ---- Mẫu âm thật ----
 
     @Test

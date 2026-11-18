@@ -2,6 +2,7 @@ package com.bandstudio.app.audio
 
 import android.content.Context
 import com.bandstudio.app.model.Catalog
+import com.bandstudio.app.model.Instruments
 import com.bandstudio.app.model.Wav
 import com.bandstudio.app.model.WavData
 
@@ -22,6 +23,31 @@ object SampleBank {
         }.also { cache = it }
         decoded.forEachIndexed { slot, wav ->
             if (wav != null) AudioEngine.loadSample(slot, wav.samples, wav.sampleRate)
+        }
+        loadInstruments(context)
+    }
+
+    /**
+     * Piano, guitar, bass thật: đọc manifest rồi nạp từng mẫu vào ô 100+ và đăng ký vùng phát. Mỗi mẫu được nạp xong là bỏ,
+     * không giữ bản giải mã trong bộ nhớ Java (engine giữ bản 16-bit của riêng nó). Thiếu tệp thì nhạc cụ đó dùng giọng tổng hợp.
+     */
+    private fun loadInstruments(context: Context) {
+        val sets = try {
+            Instruments.parse(context.assets.open("instruments/manifest.json").use { String(it.readBytes()) })
+        } catch (e: Exception) {
+            return
+        }
+        var slot = Instruments.FIRST_SLOT
+        for (set in sets) for (z in set.zones) {
+            val wav = try {
+                context.assets.open("instruments/${z.file}").use { Wav.parse(it.readBytes()) }
+            } catch (e: Exception) {
+                null
+            }
+            if (wav != null && AudioEngine.loadSample(slot, wav.samples, wav.sampleRate)) {
+                AudioEngine.addZone(set.inst, slot, z.root, z.lo, z.hi, z.velLo, z.velHi, set.gain)
+            }
+            slot++
         }
     }
 }

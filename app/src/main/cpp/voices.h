@@ -88,7 +88,7 @@ struct Voice {
     int chokeGroup = 0;
     float send = 0.0f;  // phần tín hiệu gửi vào reverb chung
     // Mẫu âm thật (pad Looper): con trỏ chỉ đọc, đọc với nội suy tuyến tính theo tỉ lệ sample rate.
-    const float* smpData = nullptr;
+    const int16_t* smpData = nullptr;  // mẫu lưu 16-bit (một nửa bộ nhớ so với float); đọc nhân 1/32768
     int smpLen = 0;
     double smpPos = 0.0, smpInc = 1.0;
     // Synth (lead/arp và pad): 3 oscillator saw detune (PolyBLEP) + sub sine, lọc thấp 12 dB có envelope, ADSR.
@@ -194,7 +194,7 @@ private:
             return 0.0f;
         }
         const float fr = static_cast<float>(smpPos - i0);
-        const float out = smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr;
+        const float out = (smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr) * (1.0f / 32768.0f);
         smpPos += smpInc;
         return out;
     }
@@ -273,7 +273,7 @@ private:
                 smpData = nullptr;  // hết mẫu
             } else {
                 const float fr = static_cast<float>(smpPos - i0);
-                float sv = smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr;
+                float sv = (smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr) * (1.0f / 32768.0f);
                 if (noiseLpK < 1.0f) {  // noiseLP của Patch áp cho cả mẫu thật
                     smpLp += (sv - smpLp) * noiseLpK;
                     sv = smpLp;
