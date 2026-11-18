@@ -48,7 +48,7 @@ object Patterns {
             "0............... 0.......b....... 0.....c...d..... 0..0....c...b...",
         ),
         "drill" to listOf(
-            "X.....x...x..... X..x......x..x.. X........x.x.... X.x.....x..x...",
+            "X.....x...x..... X..x......x..x.. X........x.x.... X.x.....x..x....",
             "........X....... ........X.....x. ........X..x.... ........X...g..x",
             "x.x.x.x.x.x.x.x. x.xtx.x.x.xtx.x. x..x..x..x..x..x x.x.tqx.x.x.tqx.",
             "..x...x...x...x. x...x...x...x... ...x...x...x...x x.x.....x.x.....",
@@ -215,6 +215,9 @@ object Patterns {
         "edm" to listOf("x...x...x...x...", "..x...x...x...x.", "xxxxxxxxxxxxxxxx", "x..x..x...x..x.."),
         "latin" to listOf("x..x..x.x..x..x.", "..x..x..x..x..x.", "x.x.x.x.x.x.x.x.", "x.......x...x..."),
         "jazz" to listOf("x...............", "x.......x.....x.", "x.x.x.x.x.x.x.x.", "..x.......x....."),
+        "melodic" to listOf("x...............", "x.......x.......", "x.x.x.x.x.x.x.x.", "x.....x.x......."),
+        "drill" to listOf("x...............", "x.....x.........", "x.x.x.x.x.x.x.x.", "x..x..x.x..x..x."),
+        "afro" to listOf("x..x..x.........", "x..x..x.x..x..x.", "x.x.x.x.x.x.x.x.", "..x...x..x..x..."),
     )
 
     /** Chuỗi 16 bước của nhịp hợp âm (để hiện vạch nhỏ trên pad). */
