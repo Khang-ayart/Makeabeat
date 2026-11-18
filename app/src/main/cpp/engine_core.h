@@ -88,7 +88,7 @@ private:
     void adoptPendingSong() noexcept;
     void seekEvents(int64_t tick) noexcept;
     void releaseSequenced(bool includeDrums) noexcept;
-    void startVoice(Inst inst, int track, int note, int velocity, int64_t endTick, bool seq, uint64_t seed) noexcept;
+    void startVoice(Inst inst, int track, int note, int velocity, int64_t endTick, bool seq, uint64_t seed, int role = 0) noexcept;
     Voice* allocateVoice() noexcept;
     void triggerClick(bool accent) noexcept;
     void advanceTransport(bool metronome) noexcept;
@@ -139,6 +139,15 @@ private:
         int32_t tick = 0, track = 0, kitIdx = 0, vel = 0, dur = 0;
     };
     SpscQueue<RecEvent, 512> recEvents_;  // âm thanh -> UI
+
+    // ---- Bản trộn Looper (chỉ chạy khi bật setMasterFx): EQ theo vai, sidechain từ kick, bão hòa nhẹ, limiter ----
+    static constexpr int kRoles = 5;
+    float hpState_[kMaxTracks][kRoles] = {};
+    float lpState_[kMaxTracks][kRoles] = {};
+    float scEnv_ = 0.0f;       // mức "đạp" sidechain 0..1
+    int scHold_ = 0;           // số mẫu còn lại của pha hạ nhanh sau mỗi cú kick
+    float scAtk_ = 0.0f, scRel_ = 0.0f, limRel_ = 0.0f, limGain_ = 1.0f;
+    float hpA_[kRoles] = {}, lpA_[kRoles] = {};
 
     bool audible_[kMaxTracks] = {};
     float targetL_[kMaxTracks] = {}, targetR_[kMaxTracks] = {};

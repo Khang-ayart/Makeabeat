@@ -12,6 +12,7 @@ constexpr double kEps = 1e-9;  // chống sai số số thực ở biên phách 
 constexpr float kMasterGain = 0.8f;
 constexpr float kMinBpm = 20.0f;
 constexpr float kMaxBpm = 400.0f;
+constexpr float kLimiterCeil = 0.92f;
 constexpr float kGainSmooth = 0.002f;  // ~10 ms: kéo thanh trượt không bị "lạch tạch"
 
 // Cắt mềm: nhiều nốt cộng lại không vỡ tiếng. Đầu ra luôn nằm trong [-1, 1].
@@ -134,6 +135,16 @@ void EngineCore::prepare(int sampleRate, int channelCount) {
     chokeCoef_ = static_cast<float>(std::exp(-1.0 / (0.012 * sampleRate_)));
     for (auto& v : voices_) v.active = false;
     fx_.prepare(sampleRate_);
+    auto onePole = [&](double hz) { return static_cast<float>(1.0 - std::exp(-2.0 * kPi * hz / sampleRate_)); };
+    // Vai: 1 kick, 2 bass, 3 nhạc, 4 trống phụ. hpA_ = tần số cắt thông cao, lpA_ = cắt thấp (0 = không cắt).
+    hpA_[1] = onePole(28.0);  hpA_[2] = onePole(30.0);  hpA_[3] = onePole(170.0);  hpA_[4] = onePole(110.0);
+    lpA_[1] = 0.0f;           lpA_[2] = onePole(5500.0); lpA_[3] = onePole(9500.0); lpA_[4] = 0.0f;
+    scAtk_ = onePole(260.0);
+    scRel_ = static_cast<float>(std::exp(-1.0 / (0.13 * sampleRate_)));
+    limRel_ = static_cast<float>(std::exp(-1.0 / (0.09 * sampleRate_)));
+    for (auto& a : hpState_) for (auto& x : a) x = 0.0f;
+    for (auto& a : lpState_) for (auto& x : a) x = 0.0f;
+    scEnv_ = 0.0f; scHold_ = 0; limGain_ = 1.0f;
     clearPads();
     click_ = Click{};
     gainsInit_ = false;
@@ -394,12 +405,12 @@ Voice* EngineCore::allocateVoice() noexcept {
 }
 
 void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_t endTick, bool seq,
-                            uint64_t seed) noexcept {
+                            uint64_t seed, int role) noexcept {
     track = std::clamp(track, 0, kMaxTracks - 1);
     if (inst == Inst::Looper && note >= kKeyNoteBase) {  // nốt của track Looper: piano / synth lead / synth pad theo mã
         const Inst voice = note >= kPadNoteBase ? Inst::SynthPad : note >= kLeadNoteBase ? Inst::SynthLead : Inst::Piano;
         const int base = voice == Inst::SynthPad ? kPadNoteBase : voice == Inst::SynthLead ? kLeadNoteBase : kKeyNoteBase;
-        startVoice(voice, track, std::min(note - base, 127), velocity, endTick, seq, seed);
+        startVoice(voice, track, std::min(note - base, 127), velocity, endTick, seq, seed, 3);
         return;
     }
     if (inst == Inst::Looper) {  // pad: âm lấy từ kit của track trong bài nhạc hiện tại
@@ -421,6 +432,8 @@ void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_
         v->track = static_cast<uint8_t>(track);
         v->seq = seq;
         v->endTick = endTick;
+        v->role = static_cast<uint8_t>(note < 4 ? 1 : note < 16 ? 4 : 2);  // hàng 0 kick, 1-3 trống phụ, còn lại bass
+        if (v->role == 1) scHold_ = static_cast<int>(0.006 * sampleRate_);  // kick vừa đánh: kích sidechain
         return;
     }
     if (isDrum(inst) && note == kHatClosed) {  // hi-hat đóng chặn hi-hat mở
@@ -448,6 +461,7 @@ void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_
             sv->track = static_cast<uint8_t>(track);
             sv->seq = seq;
             sv->endTick = endTick;
+            sv->role = static_cast<uint8_t>(role);
             return;
         }
     }
@@ -457,6 +471,7 @@ void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_
     v->track = static_cast<uint8_t>(track);
     v->seq = seq;
     v->endTick = endTick;
+    v->role = static_cast<uint8_t>(role);
 }
 
 void EngineCore::triggerClick(bool accent) noexcept {
@@ -574,12 +589,36 @@ void EngineCore::render(float* out, int numFrames) noexcept {
         if (playing_) advanceTransport(metronome);
 
         float bus[kMaxTracks] = {};
+        float grp[kMaxTracks][kRoles] = {};
         float send = 0.0f;
         for (auto& v : voices_) {
             if (!v.active) continue;
             const float s = v.render(table_);
-            bus[v.track] += s;
+            if (fxOn && v.role > 0 && v.role < kRoles) grp[v.track][v.role] += s;
+            else bus[v.track] += s;
             send += s * v.send;
+        }
+        if (fxOn) {
+            // Sidechain: kick vừa đánh thì bass/nhạc hạ xuống nhanh rồi trồi lại, để kick luôn "thở" ra phía trước.
+            if (scHold_ > 0) { --scHold_; scEnv_ += (1.0f - scEnv_) * scAtk_; }
+            else scEnv_ *= scRel_;
+            for (int t = 0; t < kMaxTracks; ++t) {
+                for (int r = 1; r < kRoles; ++r) {
+                    float x = grp[t][r];
+                    float& hp = hpState_[t][r];
+                    float& lp = lpState_[t][r];
+                    hp += (x - hp) * hpA_[r];  // thông cao: bỏ rumble của bass, giữ nhạc/trống phụ khỏi lấn kick+bass
+                    x -= hp;
+                    if (lpA_[r] > 0.0f) { lp += (x - lp) * lpA_[r]; x = lp; }  // cắt chói
+                    if (r == 2) x = std::tanh(x * 1.6f) * 0.78f + x * 0.22f;  // bass: thêm hài để nghe rõ trên loa nhỏ
+                    else if (r == 1) x = std::tanh(x * 1.2f) * 0.9f;          // kick: dày nhẹ
+                    if (r == 2) x *= 1.0f - 0.45f * scEnv_;
+                    else if (r == 3) x *= 1.0f - 0.30f * scEnv_;
+                    if (std::fabs(hp) < 1e-20f) hp = 0.0f;
+                    if (std::fabs(lp) < 1e-20f) lp = 0.0f;
+                    bus[t] += x;
+                }
+            }
         }
 
         float left = 0.0f, right = 0.0f;
@@ -601,6 +640,14 @@ void EngineCore::render(float* out, int numFrames) noexcept {
         if (fxOn) fx_.process(left, right, fxWet, send);
         left = softClip(left * kMasterGain);
         right = softClip(right * kMasterGain);
+        if (fxOn) {  // limiter cuối chuỗi: hạ độ lợi tức thì khi vượt trần, nhả chậm; nhiều hàng cộng lại không còn vỡ tiếng
+            const float peak = std::max(std::fabs(left), std::fabs(right));
+            const float target = peak > kLimiterCeil ? kLimiterCeil / peak : 1.0f;
+            if (target < limGain_) limGain_ = target;
+            else limGain_ += (1.0f - limGain_) * (1.0f - limRel_);
+            left *= limGain_;
+            right *= limGain_;
+        }
 
         float* frame = out + static_cast<size_t>(i) * channels_;
         if (channels_ == 1) {

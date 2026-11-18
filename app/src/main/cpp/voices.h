@@ -52,6 +52,7 @@ struct Voice {
     Kind kind = Kind::Harmonic;
     uint8_t track = 0;
     uint8_t piece = 0;
+    uint8_t role = 0;     // vai trong bản trộn Looper: 0 không, 1 kick, 2 bass, 3 nhạc (keys/synth/pad), 4 trống phụ
     uint8_t variant = 0;  // trống: 0 = Kit, 1 = Pad (808)
     int note = -1;
     uint64_t order = 0;

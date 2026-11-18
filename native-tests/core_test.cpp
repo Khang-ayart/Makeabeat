@@ -1201,6 +1201,44 @@ static void testKeyboardNotesInClip() {
     if (song) CHECK(song->tracks[0].pads[20].hits.size() == 1, "invalid hits kept: %zu", song->tracks[0].pads[20].hits.size());
 }
 
+static void testLooperMix() {
+    begin("Bản trộn Looper: kick đạp sidechain lên bass, bass bị cắt rumble, limiter giữ đỉnh dưới trần, tắt fx thì không đụng");
+    auto setup = [&](bool fx) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        core->setMasterFx(fx, 0.0f);
+        std::vector<float> sine(24000), silent(2400, 0.0f);
+        for (size_t i = 0; i < sine.size(); ++i) sine[i] = 0.6f * std::sin(2.0f * 3.14159265f * 100.0f * static_cast<float>(i) / 48000.0f);
+        core->loadSample(0, silent.data(), 2400, 48000);  // kick im lặng: chỉ đo phần sidechain
+        core->loadSample(1, sine.data(), 24000, 48000);
+        Kit kit(17, samplePatch(0, 1.0f));
+        kit[16] = samplePatch(1, 1.0f);
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, kit)}));
+        renderAll(*core, 1, 64, 64);
+        return core;
+    };
+    auto run = [&](bool fx, bool kick) {
+        auto core = setup(fx);
+        core->noteOn(static_cast<int>(Inst::Looper), 0, 16, 127);
+        renderAll(*core, 1, 9600, 480);
+        if (kick) core->noteOn(static_cast<int>(Inst::Looper), 0, 0, 127);
+        return renderAll(*core, 1, 4800, 480);
+    };
+    const auto plain = run(true, false), ducked = run(true, true);
+    const double a = rms(plain, 480, 2400), b = rms(ducked, 480, 2400);
+    CHECK(a > 0.05, "bass vanished in mix (%f)", a);
+    CHECK(b < 0.8 * a, "sidechain did not duck bass (%f vs %f)", b, a);
+    CHECK(rms(ducked, 4000, 4800) > 0.8 * rms(plain, 4000, 4800), "bass did not recover after the kick");
+    // Fx tắt: kick không ảnh hưởng bass.
+    const auto offPlain = run(false, false), offKick = run(false, true);
+    CHECK(offPlain == offKick, "sidechain active while fx off");
+    // Limiter: nhiều voice to cùng lúc vẫn dưới trần.
+    auto core = setup(true);
+    for (int i = 0; i < 12; ++i) core->noteOn(static_cast<int>(Inst::Looper), 0, 16, 127);
+    const auto loud = renderAll(*core, 1, 24000, 480);
+    CHECK(peak(loud, 0, loud.size()) <= 0.93f, "limiter let peak through (%f)", peak(loud, 0, loud.size()));
+    CHECK(peak(loud, 4800, 4800) > 0.2f, "limiter crushed the signal (%f)", peak(loud, 4800, 4800));
+}
+
 int main() {
     testExactBeatsAt120();
     testNoDriftAtOddTempo();
@@ -1246,6 +1284,7 @@ int main() {
     testKeyboardPadPitchAndRelease();
     testKeyboardNotesInClip();
     testSynthRows();
+    testLooperMix();
 
     if (g_failures == 0) {
         std::printf("\nALL %d TESTS PASSED\n", g_tests);
