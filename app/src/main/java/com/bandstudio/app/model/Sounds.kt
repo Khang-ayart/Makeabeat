@@ -319,7 +319,7 @@ object Catalog {
             listOf("snare.rim", "snare.pop", "snare.soft", "snare.clap"),
             listOf("hat.shaker", "hat.tight", "hat.closed", "hat.soft"),
             listOf("perc.conga", "perc.bongo", "perc.shaker", "perc.cowbell"),
-            "bass.finger", false, listOf(0, 5, 7, 9)),
+            "bass.pluck", false, listOf(0, 5, 7, 9)),
         g("lofi", "Lo-fi", 78, "boombap",
             listOf("kick.lofi", "kick.soft", "kick.deep", "kick.tight"),
             listOf("snare.lofi", "snare.soft", "snare.brush", "snare.rim"),
