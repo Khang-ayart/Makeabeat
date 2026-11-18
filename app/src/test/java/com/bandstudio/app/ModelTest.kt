@@ -304,11 +304,12 @@ class ModelTest {
     }
 
     @Test
-    fun sampleSlotIsEncodedAsLastPatchInt() {
+    fun sampleSlotAndSendAreEncodedLast() {
         val out = ArrayList<Int>()
-        Patch(sample = 5, bursts = 2, chokeGroup = 1).encodeTo(out)
+        Patch(sample = 5, send = 0.4f, bursts = 2, chokeGroup = 1).encodeTo(out)
         assertEquals(Patch.INTS, out.size)
-        assertEquals(5, out.last())
+        assertEquals(5, out[17])  // ô mẫu
+        assertEquals(400, out[18])  // send x1000
         assertEquals(2, out[9])   // bursts (số nguyên thô)
         assertEquals(1, out[14])  // chokeGroup (số nguyên thô)
     }
