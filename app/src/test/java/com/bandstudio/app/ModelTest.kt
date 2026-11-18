@@ -402,7 +402,7 @@ class ModelTest {
     fun everyNonBassSoundHasAValidSampleFile() {
         assertEquals(Catalog.sampleIds.size, Catalog.sampleIds.toSet().size)
         for (snd in Catalog.sounds) {
-            if (snd.cat == SoundCat.BASS && snd.id !in setOf("bass.808long", "bass.808short", "bass.808dist")) {
+            if (snd.cat == SoundCat.BASS && snd.id !in setOf("bass.808long", "bass.808short", "bass.808dist", "bass.finger")) {
                 assertEquals("${snd.id}: bass dùng tổng hợp", -1, snd.patch.sample)
                 continue
             }
@@ -422,7 +422,7 @@ class ModelTest {
 
     @Test
     fun sampled808HasRootAndFixedGlide() {
-        for (id in listOf("bass.808long", "bass.808short", "bass.808dist")) {
+        for (id in listOf("bass.808long", "bass.808short", "bass.808dist", "bass.finger")) {
             val p = Catalog.sound(id)!!.patch
             assertTrue("$id: root", p.root in 40f..70f)
             assertTrue("$id: ô mẫu", p.sample >= 0)

@@ -168,6 +168,7 @@ object Catalog {
         s("bass.808long", "808 dài", SoundCat.BASS, Patch(1f, E1 * 1.6f, E1, 40f, 700f, drive = 0.3f, gain = 0.9f)),
         s("bass.808short", "808 ngắn", SoundCat.BASS, Patch(1f, E1 * 1.5f, E1, 25f, 250f, gain = 0.9f)),
         s("bass.808dist", "808 rè", SoundCat.BASS, Patch(1f, E1 * 1.6f, E1, 40f, 600f, drive = 4f, gain = 0.9f)),
+        s("bass.finger", "Bass guitar", SoundCat.BASS, Patch(1f, E1, E1, 30f, 600f, gain = 0.9f)),
         s("bass.sub", "Sub mềm", SoundCat.BASS, Patch(1f, E1, E1, 30f, 450f, gain = 0.9f)),
         s("bass.pluck", "Bass gảy", SoundCat.BASS,
             Patch(0.9f, E1, E1, 30f, 300f, 0.1f, 4f, 0f, 0.5f, tone2Ratio = 2f, tone2Amp = 0.4f)),
@@ -180,7 +181,7 @@ object Catalog {
      */
     private val allSounds: List<Sound> = kicks + snares + hats + percs + basses
     /** 808 mẫu thật: tần số gốc (Hz) đo từ mẫu; engine đổi cao độ và trượt nốt theo fStart -> fEnd của patch. */
-    private val sampledBassRoot = mapOf("bass.808long" to 55.2f, "bass.808short" to 49.1f, "bass.808dist" to 51.0f)
+    private val sampledBassRoot = mapOf("bass.808long" to 55.2f, "bass.808short" to 49.1f, "bass.808dist" to 51.0f, "bass.finger" to 65.4f)
     val sampleIds: List<String> = allSounds.filter { it.cat != SoundCat.BASS || it.id in sampledBassRoot }.map { it.id }
     private val sampleGain = mapOf(SoundCat.KICK to 1f, SoundCat.SNARE to 1f, SoundCat.HAT to 1f, SoundCat.PERC to 1f, SoundCat.BASS to 0.9f) // độ to đã cân sẵn trong mẫu
     // Lệch nhẹ mỗi cú đánh (round robin giả): hi-hat/perc/snare nhiều hơn, kick ít, bass giữ nguyên cao độ.
@@ -288,7 +289,7 @@ object Catalog {
             listOf("snare.pop", "snare.crack", "snare.clap", "snare.rim"),
             listOf("hat.closed", "hat.open", "hat.tight", "hat.shaker"),
             listOf("perc.tamb", "perc.snap", "perc.shaker", "perc.crash"),
-            "bass.pluck", false, listOf(0, 5, 7, 9)),
+            "bass.finger", false, listOf(0, 5, 7, 9)),
         g("hiphop", "Hip-hop", 90, "boombap",
             listOf("kick.deep", "kick.punch", "kick.lofi", "kick.boom"),
             listOf("snare.crack", "snare.pop", "snare.lofi", "snare.rim"),
@@ -318,7 +319,7 @@ object Catalog {
             listOf("snare.rim", "snare.pop", "snare.soft", "snare.clap"),
             listOf("hat.shaker", "hat.tight", "hat.closed", "hat.soft"),
             listOf("perc.conga", "perc.bongo", "perc.shaker", "perc.cowbell"),
-            "bass.pluck", false, listOf(0, 5, 7, 9)),
+            "bass.finger", false, listOf(0, 5, 7, 9)),
         g("lofi", "Lo-fi", 78, "boombap",
             listOf("kick.lofi", "kick.soft", "kick.deep", "kick.tight"),
             listOf("snare.lofi", "snare.soft", "snare.brush", "snare.rim"),
@@ -336,7 +337,7 @@ object Catalog {
             listOf("snare.crack", "snare.pop", "snare.rim", "snare.soft"),
             listOf("hat.closed", "hat.open", "hat.tight", "hat.soft"),
             listOf("perc.crash", "perc.ride", "perc.tom", "perc.tamb"),
-            "bass.pluck", true, listOf(0, 3, 5, 7)),
+            "bass.finger", true, listOf(0, 3, 5, 7)),
         g("edm", "EDM", 128, "edm",
             listOf("kick.edm", "kick.punch", "kick.tight", "kick.boom"),
             listOf("snare.clap", "snare.crack", "snare.pop", "snare.trap"),
@@ -348,19 +349,19 @@ object Catalog {
             listOf("snare.brush", "snare.soft", "snare.rim", "snare.pop"),
             listOf("hat.soft", "hat.closed", "hat.open", "hat.shaker"),
             listOf("perc.ride", "perc.shaker", "perc.conga", "perc.clave"),
-            "bass.pluck", true, listOf(0, 3, 7, 10)),
+            "bass.finger", true, listOf(0, 3, 7, 10)),
         g("acoustic", "Acoustic / Folk", 100, "pop",
             listOf("kick.soft", "kick.tight", "kick.deep", "kick.punch"),
             listOf("snare.soft", "snare.brush", "snare.rim", "snare.pop"),
             listOf("hat.soft", "hat.closed", "hat.open", "hat.shaker"),
             listOf("perc.tamb", "perc.shaker", "perc.conga", "perc.clave"),
-            "bass.pluck", false, listOf(0, 4, 5, 7)),
+            "bass.finger", false, listOf(0, 4, 5, 7)),
         g("latin", "Latin", 100, "latin",
             listOf("kick.tight", "kick.soft", "kick.punch", "kick.deep"),
             listOf("snare.rim", "snare.soft", "snare.pop", "snare.clap"),
             listOf("hat.closed", "hat.shaker", "hat.open", "hat.soft"),
             listOf("perc.conga", "perc.bongo", "perc.cowbell", "perc.clave"),
-            "bass.pluck", true, listOf(0, 5, 7, 10)),
+            "bass.finger", true, listOf(0, 5, 7, 10)),
     )
 
     fun genre(id: String): Genre? = genres.firstOrNull { it.id == id }

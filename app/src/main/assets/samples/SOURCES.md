@@ -41,3 +41,4 @@ Mọi mẫu lấy từ Stargate DAW Sample Pack (https://github.com/stargatedaw/
 - `bass.808long.wav` <- `fugue-state-audio/drums/kicks/sdbkit-sub-a.wav` (sub 55 Hz kéo dài)
 - `bass.808short.wav` <- `microlag/One-Shots/Drums/Kick2.wav` (~49 Hz)
 - `bass.808dist.wav` <- `microlag/One-Shots/Drums/Kick1.wav` (~51 Hz)
+- `bass.finger.wav` <- Karoryfer Swagbass `bass_p_36` (bass guitar thật, C2 = 65,4 Hz sau khi sửa quãng tám; xem tools/build_instruments.py)

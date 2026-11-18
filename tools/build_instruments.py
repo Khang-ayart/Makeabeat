@@ -62,27 +62,32 @@ def build(inst_id, name, gain, layers, finder, long_sec, short_sec, manifest, no
             entry["zones"].append({"file": rel, "root": r, "lo": lo, "hi": hi, "velLo": vlo, "velHi": vhi})
     manifest.append(entry)
 
+# Tên nốt trong tệp nguồn không trùng cao độ thật: Splendid Grand Piano ghi C3 = đô giữa (thật cao hơn 1 quãng tám),
+# Swagbass ghi theo khuông bass (thật thấp hơn 1 quãng tám). Đo phổ từng tệp xác nhận; guitar khớp tên nên không bù.
+PIANO_OFFSET = 12
+BASS_OFFSET = -12
+
 def piano_finder(layer):
     d = f"{SRC}/splendidgrandpiano/Samples"
     out = {}
     for f in os.listdir(d):
         m = re.fullmatch(rf"{layer} ([A-G]#?-?\d+)\.flac", f)
-        if m: out[midi(m.group(1))] = os.path.join(d, f)
+        if m: out[midi(m.group(1)) + PIANO_OFFSET] = os.path.join(d, f)
     return out
 
-def glob_finder(folder, pattern):
+def glob_finder(folder, pattern, offset=0):
     def find(layer):
         out = {}
         for f in os.listdir(folder):
             m = re.fullmatch(pattern.format(layer=layer), f)
-            if m: out[midi(m.group(1))] = os.path.join(folder, f)
+            if m: out[midi(m.group(1)) + offset] = os.path.join(folder, f)
         return out
     return find
 
 manifest = []
 build(0, "piano", 0.55, [("Mp", 1, 84, 0.55), ("FF", 85, 127, 0.85)], piano_finder, 6.0, 4.5, manifest)
 build(3, "bass", 0.6, [("p", 1, 72, 0.6), ("f", 73, 127, 0.85)],
-      glob_finder(f"{SRC}/karoryfer.swagbass/notes", r"([a-g][#b]?\d)_{layer}_rr1\.wav"), 3.5, 3.0, manifest)
+      glob_finder(f"{SRC}/karoryfer.swagbass/notes", r"([a-g][#b]?\d)_{layer}_rr1\.wav", BASS_OFFSET), 3.5, 3.0, manifest)
 build(1, "acoustic", 0.55, [("vl2", 1, 80, 0.55), ("vl4", 81, 127, 0.85)],
       glob_finder(f"{SRC}/karoryfer.shinyguitar/Samples/acoustic", r"([a-g][#b]?\d)_{layer}_rr1_1\.wav"), 4.0, 3.5, manifest)
 build(2, "electric", 0.55, [("mp", 1, 80, 0.55), ("f", 81, 127, 0.85)],

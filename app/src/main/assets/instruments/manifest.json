@@ -7,153 +7,121 @@
    "gain": 0.55,
    "zones": [
     {
-     "file": "piano/piano_Mp_11.wav",
-     "root": 11,
-     "lo": 0,
-     "hi": 13,
-     "velLo": 1,
-     "velHi": 84
-    },
-    {
-     "file": "piano/piano_Mp_15.wav",
-     "root": 15,
-     "lo": 14,
-     "hi": 17,
-     "velLo": 1,
-     "velHi": 84
-    },
-    {
-     "file": "piano/piano_Mp_19.wav",
-     "root": 19,
-     "lo": 18,
-     "hi": 21,
-     "velLo": 1,
-     "velHi": 84
-    },
-    {
      "file": "piano/piano_Mp_23.wav",
      "root": 23,
-     "lo": 22,
-     "hi": 24,
+     "lo": 0,
+     "hi": 25,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_26.wav",
-     "root": 26,
-     "lo": 25,
-     "hi": 27,
+     "file": "piano/piano_Mp_27.wav",
+     "root": 27,
+     "lo": 26,
+     "hi": 29,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_29.wav",
-     "root": 29,
-     "lo": 28,
-     "hi": 31,
+     "file": "piano/piano_Mp_31.wav",
+     "root": 31,
+     "lo": 30,
+     "hi": 33,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_33.wav",
-     "root": 33,
-     "lo": 32,
-     "hi": 34,
+     "file": "piano/piano_Mp_35.wav",
+     "root": 35,
+     "lo": 34,
+     "hi": 36,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_36.wav",
-     "root": 36,
-     "lo": 35,
-     "hi": 38,
+     "file": "piano/piano_Mp_38.wav",
+     "root": 38,
+     "lo": 37,
+     "hi": 39,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_40.wav",
-     "root": 40,
-     "lo": 39,
-     "hi": 41,
+     "file": "piano/piano_Mp_41.wav",
+     "root": 41,
+     "lo": 40,
+     "hi": 43,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_43.wav",
-     "root": 43,
-     "lo": 42,
-     "hi": 44,
+     "file": "piano/piano_Mp_45.wav",
+     "root": 45,
+     "lo": 44,
+     "hi": 46,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_46.wav",
-     "root": 46,
-     "lo": 45,
-     "hi": 48,
+     "file": "piano/piano_Mp_48.wav",
+     "root": 48,
+     "lo": 47,
+     "hi": 50,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_50.wav",
-     "root": 50,
-     "lo": 49,
-     "hi": 51,
+     "file": "piano/piano_Mp_52.wav",
+     "root": 52,
+     "lo": 51,
+     "hi": 53,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_53.wav",
-     "root": 53,
-     "lo": 52,
-     "hi": 55,
+     "file": "piano/piano_Mp_55.wav",
+     "root": 55,
+     "lo": 54,
+     "hi": 56,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_57.wav",
-     "root": 57,
-     "lo": 56,
-     "hi": 58,
+     "file": "piano/piano_Mp_58.wav",
+     "root": 58,
+     "lo": 57,
+     "hi": 60,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_60.wav",
-     "root": 60,
-     "lo": 59,
-     "hi": 62,
+     "file": "piano/piano_Mp_62.wav",
+     "root": 62,
+     "lo": 61,
+     "hi": 63,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_64.wav",
-     "root": 64,
-     "lo": 63,
-     "hi": 65,
+     "file": "piano/piano_Mp_65.wav",
+     "root": 65,
+     "lo": 64,
+     "hi": 67,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_67.wav",
-     "root": 67,
-     "lo": 66,
-     "hi": 68,
+     "file": "piano/piano_Mp_69.wav",
+     "root": 69,
+     "lo": 68,
+     "hi": 70,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_70.wav",
-     "root": 70,
-     "lo": 69,
-     "hi": 71,
-     "velLo": 1,
-     "velHi": 84
-    },
-    {
-     "file": "piano/piano_Mp_73.wav",
-     "root": 73,
-     "lo": 72,
+     "file": "piano/piano_Mp_72.wav",
+     "root": 72,
+     "lo": 71,
      "hi": 74,
      "velLo": 1,
      "velHi": 84
@@ -186,174 +154,174 @@
      "file": "piano/piano_Mp_85.wav",
      "root": 85,
      "lo": 84,
-     "hi": 87,
+     "hi": 86,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_89.wav",
-     "root": 89,
-     "lo": 88,
-     "hi": 90,
+     "file": "piano/piano_Mp_88.wav",
+     "root": 88,
+     "lo": 87,
+     "hi": 89,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_Mp_92.wav",
-     "root": 92,
-     "lo": 91,
+     "file": "piano/piano_Mp_91.wav",
+     "root": 91,
+     "lo": 90,
+     "hi": 92,
+     "velLo": 1,
+     "velHi": 84
+    },
+    {
+     "file": "piano/piano_Mp_94.wav",
+     "root": 94,
+     "lo": 93,
+     "hi": 95,
+     "velLo": 1,
+     "velHi": 84
+    },
+    {
+     "file": "piano/piano_Mp_97.wav",
+     "root": 97,
+     "lo": 96,
+     "hi": 99,
+     "velLo": 1,
+     "velHi": 84
+    },
+    {
+     "file": "piano/piano_Mp_101.wav",
+     "root": 101,
+     "lo": 100,
+     "hi": 102,
+     "velLo": 1,
+     "velHi": 84
+    },
+    {
+     "file": "piano/piano_Mp_104.wav",
+     "root": 104,
+     "lo": 103,
      "hi": 127,
      "velLo": 1,
      "velHi": 84
     },
     {
-     "file": "piano/piano_FF_11.wav",
-     "root": 11,
-     "lo": 0,
-     "hi": 13,
-     "velLo": 85,
-     "velHi": 127
-    },
-    {
-     "file": "piano/piano_FF_15.wav",
-     "root": 15,
-     "lo": 14,
-     "hi": 17,
-     "velLo": 85,
-     "velHi": 127
-    },
-    {
-     "file": "piano/piano_FF_19.wav",
-     "root": 19,
-     "lo": 18,
-     "hi": 21,
-     "velLo": 85,
-     "velHi": 127
-    },
-    {
      "file": "piano/piano_FF_23.wav",
      "root": 23,
-     "lo": 22,
-     "hi": 24,
+     "lo": 0,
+     "hi": 25,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_26.wav",
-     "root": 26,
-     "lo": 25,
-     "hi": 27,
+     "file": "piano/piano_FF_27.wav",
+     "root": 27,
+     "lo": 26,
+     "hi": 29,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_29.wav",
-     "root": 29,
-     "lo": 28,
-     "hi": 31,
+     "file": "piano/piano_FF_31.wav",
+     "root": 31,
+     "lo": 30,
+     "hi": 33,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_33.wav",
-     "root": 33,
-     "lo": 32,
-     "hi": 34,
+     "file": "piano/piano_FF_35.wav",
+     "root": 35,
+     "lo": 34,
+     "hi": 36,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_36.wav",
-     "root": 36,
-     "lo": 35,
-     "hi": 38,
+     "file": "piano/piano_FF_38.wav",
+     "root": 38,
+     "lo": 37,
+     "hi": 39,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_40.wav",
-     "root": 40,
-     "lo": 39,
-     "hi": 41,
+     "file": "piano/piano_FF_41.wav",
+     "root": 41,
+     "lo": 40,
+     "hi": 43,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_43.wav",
-     "root": 43,
-     "lo": 42,
-     "hi": 44,
+     "file": "piano/piano_FF_45.wav",
+     "root": 45,
+     "lo": 44,
+     "hi": 46,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_46.wav",
-     "root": 46,
-     "lo": 45,
-     "hi": 48,
+     "file": "piano/piano_FF_48.wav",
+     "root": 48,
+     "lo": 47,
+     "hi": 50,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_50.wav",
-     "root": 50,
-     "lo": 49,
-     "hi": 51,
+     "file": "piano/piano_FF_52.wav",
+     "root": 52,
+     "lo": 51,
+     "hi": 53,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_53.wav",
-     "root": 53,
-     "lo": 52,
-     "hi": 55,
+     "file": "piano/piano_FF_55.wav",
+     "root": 55,
+     "lo": 54,
+     "hi": 56,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_57.wav",
-     "root": 57,
-     "lo": 56,
-     "hi": 58,
+     "file": "piano/piano_FF_58.wav",
+     "root": 58,
+     "lo": 57,
+     "hi": 60,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_60.wav",
-     "root": 60,
-     "lo": 59,
-     "hi": 62,
+     "file": "piano/piano_FF_62.wav",
+     "root": 62,
+     "lo": 61,
+     "hi": 63,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_64.wav",
-     "root": 64,
-     "lo": 63,
-     "hi": 65,
+     "file": "piano/piano_FF_65.wav",
+     "root": 65,
+     "lo": 64,
+     "hi": 67,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_67.wav",
-     "root": 67,
-     "lo": 66,
-     "hi": 68,
+     "file": "piano/piano_FF_69.wav",
+     "root": 69,
+     "lo": 68,
+     "hi": 70,
      "velLo": 85,
      "velHi": 127
     },
     {
-     "file": "piano/piano_FF_70.wav",
-     "root": 70,
-     "lo": 69,
-     "hi": 71,
-     "velLo": 85,
-     "velHi": 127
-    },
-    {
-     "file": "piano/piano_FF_73.wav",
-     "root": 73,
-     "lo": 72,
+     "file": "piano/piano_FF_72.wav",
+     "root": 72,
+     "lo": 71,
      "hi": 74,
      "velLo": 85,
      "velHi": 127
@@ -370,6 +338,38 @@
      "file": "piano/piano_FF_79.wav",
      "root": 79,
      "lo": 78,
+     "hi": 80,
+     "velLo": 85,
+     "velHi": 127
+    },
+    {
+     "file": "piano/piano_FF_82.wav",
+     "root": 82,
+     "lo": 81,
+     "hi": 83,
+     "velLo": 85,
+     "velHi": 127
+    },
+    {
+     "file": "piano/piano_FF_85.wav",
+     "root": 85,
+     "lo": 84,
+     "hi": 86,
+     "velLo": 85,
+     "velHi": 127
+    },
+    {
+     "file": "piano/piano_FF_88.wav",
+     "root": 88,
+     "lo": 87,
+     "hi": 89,
+     "velLo": 85,
+     "velHi": 127
+    },
+    {
+     "file": "piano/piano_FF_91.wav",
+     "root": 91,
+     "lo": 90,
      "hi": 127,
      "velLo": 85,
      "velHi": 127
@@ -382,9 +382,41 @@
    "gain": 0.6,
    "zones": [
     {
+     "file": "bass/bass_p_21.wav",
+     "root": 21,
+     "lo": 0,
+     "hi": 22,
+     "velLo": 1,
+     "velHi": 72
+    },
+    {
+     "file": "bass/bass_p_24.wav",
+     "root": 24,
+     "lo": 23,
+     "hi": 25,
+     "velLo": 1,
+     "velHi": 72
+    },
+    {
+     "file": "bass/bass_p_27.wav",
+     "root": 27,
+     "lo": 26,
+     "hi": 28,
+     "velLo": 1,
+     "velHi": 72
+    },
+    {
+     "file": "bass/bass_p_30.wav",
+     "root": 30,
+     "lo": 29,
+     "hi": 31,
+     "velLo": 1,
+     "velHi": 72
+    },
+    {
      "file": "bass/bass_p_33.wav",
      "root": 33,
-     "lo": 0,
+     "lo": 32,
      "hi": 34,
      "velLo": 1,
      "velHi": 72
@@ -481,46 +513,46 @@
      "file": "bass/bass_p_69.wav",
      "root": 69,
      "lo": 68,
-     "hi": 70,
-     "velLo": 1,
-     "velHi": 72
-    },
-    {
-     "file": "bass/bass_p_72.wav",
-     "root": 72,
-     "lo": 71,
-     "hi": 73,
-     "velLo": 1,
-     "velHi": 72
-    },
-    {
-     "file": "bass/bass_p_75.wav",
-     "root": 75,
-     "lo": 74,
-     "hi": 76,
-     "velLo": 1,
-     "velHi": 72
-    },
-    {
-     "file": "bass/bass_p_78.wav",
-     "root": 78,
-     "lo": 77,
-     "hi": 79,
-     "velLo": 1,
-     "velHi": 72
-    },
-    {
-     "file": "bass/bass_p_81.wav",
-     "root": 81,
-     "lo": 80,
      "hi": 127,
      "velLo": 1,
      "velHi": 72
     },
     {
+     "file": "bass/bass_f_21.wav",
+     "root": 21,
+     "lo": 0,
+     "hi": 22,
+     "velLo": 73,
+     "velHi": 127
+    },
+    {
+     "file": "bass/bass_f_24.wav",
+     "root": 24,
+     "lo": 23,
+     "hi": 25,
+     "velLo": 73,
+     "velHi": 127
+    },
+    {
+     "file": "bass/bass_f_27.wav",
+     "root": 27,
+     "lo": 26,
+     "hi": 28,
+     "velLo": 73,
+     "velHi": 127
+    },
+    {
+     "file": "bass/bass_f_30.wav",
+     "root": 30,
+     "lo": 29,
+     "hi": 31,
+     "velLo": 73,
+     "velHi": 127
+    },
+    {
      "file": "bass/bass_f_33.wav",
      "root": 33,
-     "lo": 0,
+     "lo": 32,
      "hi": 34,
      "velLo": 73,
      "velHi": 127
@@ -617,38 +649,6 @@
      "file": "bass/bass_f_69.wav",
      "root": 69,
      "lo": 68,
-     "hi": 70,
-     "velLo": 73,
-     "velHi": 127
-    },
-    {
-     "file": "bass/bass_f_72.wav",
-     "root": 72,
-     "lo": 71,
-     "hi": 73,
-     "velLo": 73,
-     "velHi": 127
-    },
-    {
-     "file": "bass/bass_f_75.wav",
-     "root": 75,
-     "lo": 74,
-     "hi": 76,
-     "velLo": 73,
-     "velHi": 127
-    },
-    {
-     "file": "bass/bass_f_78.wav",
-     "root": 78,
-     "lo": 77,
-     "hi": 79,
-     "velLo": 73,
-     "velHi": 127
-    },
-    {
-     "file": "bass/bass_f_81.wav",
-     "root": 81,
-     "lo": 80,
      "hi": 127,
      "velLo": 73,
      "velHi": 127
