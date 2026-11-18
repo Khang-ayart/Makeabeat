@@ -968,7 +968,7 @@ static void testSamplerPlaysAndEnds() {
     const auto smp = rampSample(4800);  // 0,1 s ở 48 kHz
     CHECK(core->loadSample(0, smp.data(), 4800, 48000), "load failed");
     CHECK(!core->loadSample(0, smp.data(), 4800, 48000), "slot overwritten");
-    CHECK(!core->loadSample(-1, smp.data(), 4800, 48000) && !core->loadSample(256, smp.data(), 4800, 48000), "bad id accepted");
+    CHECK(!core->loadSample(-1, smp.data(), 4800, 48000) && !core->loadSample(384, smp.data(), 4800, 48000), "bad id accepted");
     CHECK(!core->loadSample(1, nullptr, 0, 48000), "null accepted");
     publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {{960, 240, 0, 127}}, Kit{samplePatch(0)})}));
     core->play(0);
@@ -1032,7 +1032,7 @@ static void testZonesPitchVelocityAndFallback() {
     const auto loud = sineSample(440.0, 48000, 48000, 0.8f);
     CHECK(core->loadSample(10, soft.data(), 48000, 48000) && core->loadSample(11, loud.data(), 48000, 48000), "load");
     CHECK(core->addZone(0, 10, 69, 60, 84, 1, 63, 1.0f) && core->addZone(0, 11, 69, 60, 84, 64, 127, 1.0f), "addZone");
-    CHECK(!core->addZone(0, 300, 69, 0, 127, 1, 127, 1.0f) && !core->addZone(99, 10, 69, 0, 127, 1, 127, 1.0f), "bad zone accepted");
+    CHECK(!core->addZone(0, 384, 69, 0, 127, 1, 127, 1.0f) && !core->addZone(99, 10, 69, 0, 127, 1, 127, 1.0f), "bad zone accepted");
     publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Piano, {})}));
     renderAll(*core, 1, 64, 64);
     // Nốt 81 (cao hơn gốc 69 một quãng tám) phải ra 880 Hz (zeroCrossings đếm cả hai chiều).
@@ -1164,6 +1164,43 @@ static void testKeyboardPadPitchAndRelease() {
     CHECK(peak(out, 0, 2000) > 0.02f, "no onset at 0");
     CHECK(peak(out, 90000, 5000) < 0.01f, "note not released (peak %f)", peak(out, 90000, 5000));
     CHECK(peak(out, 96000, 2000) > 0.02f, "second chord missing");
+}
+
+static void testVocalTrack() {
+    begin("Giọng hát: phát theo giây thực (độ trễ 500 ms), seek giữa bản thu vào đúng vị trí, im lặng ngoài bản thu, thay bản thu được");
+    const int sr = 44100;
+    std::vector<float> sine(static_cast<size_t>(sr * 2));
+    for (size_t i = 0; i < sine.size(); ++i) sine[i] = 0.5f * std::sin(2.0f * 3.14159265f * 1000.0f * static_cast<float>(i) / sr);
+    auto make = [&]() {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        CHECK(core->loadVocal(300, sine.data(), static_cast<int>(sine.size()), sr), "loadVocal failed");
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Vocal, {{500, 2000, 300, 100}})}));
+        return core;
+    };
+    auto core = make();
+    core->setVocalFx(0, 0.0f, 0.0f, 0.0f);
+    core->play(0);
+    const auto out = renderAll(*core, 1, 48000 * 3, 480);
+    CHECK(peak(out, 0, 23000) == 0.0f, "sound before the clip start (%g)", peak(out, 0, 23000));
+    CHECK(peak(out, 30000, 40000) > 0.15f, "vocal silent (%f)", peak(out, 30000, 40000));
+    const double f = estimateFreq(std::vector<float>(out.begin() + 30000, out.begin() + 90000), 48000, 1000.0);
+    CHECK(std::fabs(f - 1000.0) < 8.0, "vocal pitch/speed wrong: %.2f Hz", f);
+    CHECK(peak(out, 120000 + 2000, 20000) == 0.0f, "sound after the clip end");
+    // Seek: tick 1920 = 1 s ở 120 BPM -> nằm 0,5 s trong bản thu, phải có tiếng ngay.
+    auto c2 = make();
+    c2->setVocalFx(0, 0.0f, 0.0f, 0.0f);
+    c2->play(1920);
+    const auto o2 = renderAll(*c2, 1, 48000, 480);
+    CHECK(peak(o2, 2000, 4000) > 0.15f, "no sound after seeking into the clip");
+    // Thay bản thu bằng bản im lặng: phát im.
+    std::vector<float> zero(sine.size(), 0.0f);
+    CHECK(c2->loadVocal(300, zero.data(), static_cast<int>(zero.size()), sr), "replace failed");
+    c2->stop();
+    c2->play(1920);
+    const auto o3 = renderAll(*c2, 1, 48000, 480);
+    CHECK(peak(o3, 2000, 40000) < 1e-6f, "replaced vocal still audible (%g)", peak(o3, 2000, 40000));
+    CHECK(!c2->loadVocal(10, sine.data(), 100, sr) && !c2->loadVocal(384, sine.data(), 100, sr), "bad vocal slot accepted");
+    CHECK(c2->clearVocal(300), "clearVocal failed");
 }
 
 static void testSynthStyles() {
@@ -1362,6 +1399,7 @@ int main() {
     testKeyboardNotesInClip();
     testSynthRows();
     testSynthStyles();
+    testVocalTrack();
     testLooperMix();
     testPitchedSampleAndVary();
 

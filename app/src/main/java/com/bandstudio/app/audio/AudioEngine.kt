@@ -39,6 +39,10 @@ object AudioEngine {
     /** Nạp mẫu âm thật vào ô [id] (mono float [-1,1]); mỗi ô chỉ nạp được một lần. Gọi được từ luồng nền. */
     external fun setSynthStyle(track: Int, style: Int)
     external fun setMasterFx(on: Boolean, wet: Float)
+    /** Nạp / thay bản thu giọng hát vào ô [slot] (>= 300). Gọi từ luồng nền. */
+    external fun loadVocal(slot: Int, data: FloatArray, sampleRate: Int): Boolean
+    external fun clearVocal(slot: Int): Boolean
+    external fun setVocalFx(track: Int, reverb: Float, comp: Float, bright: Float)
     external fun loadSample(id: Int, data: FloatArray, sampleRate: Int): Boolean
     external fun addZone(inst: Int, sample: Int, root: Int, lo: Int, hi: Int, velLo: Int, velHi: Int, gain: Float): Boolean
 

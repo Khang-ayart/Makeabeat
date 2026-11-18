@@ -1,6 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <mutex>
+#include <utility>
+#include <vector>
 #include <cstdint>
 
 #include "master_fx.h"
@@ -63,6 +67,12 @@ public:
     // Đăng ký vùng phát cho nhạc cụ [inst] (ghi một lần, trước khi phát). Nhạc cụ có vùng thì phát mẫu thật theo cao độ,
     // nốt nào không có vùng phù hợp thì dùng giọng tổng hợp cũ. gain là hệ số âm lượng của vùng.
     bool addZone(int inst, int sample, int root, int lo, int hi, int velLo, int velHi, float gain);
+    // Giọng hát: nạp / thay bản thu vào ô [kVocalSlotBase, kMaxSamples). Khác loadSample: được thay nhiều lần, mẫu cũ chỉ
+    // được giải phóng sau vài giây (luồng âm thanh có thể còn đọc). Gọi từ luồng nền / UI, không phải luồng âm thanh.
+    bool loadVocal(int id, const float* data, int count, int sampleRate);
+    bool clearVocal(int id);
+    // Chuỗi xử lý giọng của track: reverb (0..1), nén (0..1), độ sáng (0..1). Tắt hết = giọng thô.
+    void setVocalFx(int track, float reverb, float comp, float bright) noexcept;
     // Bật cờ ghi: engine báo mỗi cú đánh do nhịp pad phát ra để UI ghi thành nốt.
     void setRecording(bool on) noexcept { recording_.store(on, std::memory_order_relaxed); }
     // Lấy một sự kiện ghi: out = {tick, track, kitIdx, vel}. false nếu hết.
@@ -160,6 +170,17 @@ private:
     bool gainsInit_ = false;
 
     std::atomic<const Sample*> samples_[kMaxSamples] = {};
+    std::mutex graveMutex_;  // chỉ luồng UI/nền chạm vào
+    std::vector<std::pair<const Sample*, std::chrono::steady_clock::time_point>> graveyard_;
+    void retireSample(const Sample* s);
+    // Chuỗi giọng hát (chỉ luồng âm thanh chạm vào trạng thái; tham số là atomic).
+    struct VocalState {
+        std::atomic<float> reverb{0.22f}, comp{0.6f}, bright{0.4f};
+        float hp = 0.0f, lp = 0.0f, env = 0.0f, lastIdx = -1e9f;
+        int fadeIn = 0;
+    };
+    VocalState vocal_[kMaxTracks];
+    inline float renderVocal(int track, double beat, float secPerBeat, float& send) noexcept;
     Zone zones_[kInstCount][kMaxZones];
     std::atomic<int> zoneCount_[kInstCount] = {};
 

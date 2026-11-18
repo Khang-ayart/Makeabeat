@@ -20,8 +20,9 @@ enum class Inst : uint8_t {
     Looper = 6,  // lưới pad: mỗi pad phát một âm tổng hợp theo Patch của kit
     SynthLead = 7,  // synth lead/arp (nội bộ: do hàng Synth của Looper phát)
     SynthPad = 8,   // synth pad/atmos: hợp âm nền kéo dài
+    Vocal = 9,      // bản thu giọng hát: phát theo GIÂY thực (không co giãn theo BPM)
 };
-constexpr int kInstCount = 9;
+constexpr int kInstCount = 10;
 
 inline bool isDrum(Inst i) { return i == Inst::DrumKit || i == Inst::DrumPad; }
 
@@ -81,7 +82,10 @@ struct PadPattern {
 };
 
 // Mẫu âm thật (mono, float [-1, 1]) nạp một lần khi khởi động, sau đó chỉ đọc.
-constexpr int kMaxSamples = 256;
+constexpr int kMaxSamples = 384;
+// Ô mẫu dành cho giọng hát (thay được nhiều lần): [kVocalSlotBase, kMaxSamples).
+constexpr int kVocalSlotBase = 300;
+constexpr int kMaxVocalSeconds = 360;
 // Vùng phát của nhạc cụ có cao độ (piano, bass, guitar): mẫu gốc ở nốt root, dùng cho nốt [lo, hi] và velocity [velLo, velHi].
 constexpr int kMaxZones = 96;
 struct Zone {

@@ -88,6 +88,22 @@ JNIEXPORT void JNICALL JNI_FN(setMasterFx)(JNIEnv*, jobject, jboolean on, jfloat
     if (gEngine) gEngine->core().setMasterFx(on == JNI_TRUE, wet);
 }
 
+// Giọng hát: nạp / thay bản thu (mono float) vào ô >= 300.
+JNIEXPORT jboolean JNICALL JNI_FN(loadVocal)(JNIEnv* env, jobject, jint id, jfloatArray data, jint sampleRate) {
+    if (!gEngine || !data) return JNI_FALSE;
+    const jsize n = env->GetArrayLength(data);
+    jfloat* p = env->GetFloatArrayElements(data, nullptr);
+    if (!p) return JNI_FALSE;
+    const bool ok = gEngine->core().loadVocal(id, p, static_cast<int>(n), sampleRate);
+    env->ReleaseFloatArrayElements(data, p, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT jboolean JNICALL JNI_FN(clearVocal)(JNIEnv*, jobject, jint id) {
+    return gEngine && gEngine->core().clearVocal(id) ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT void JNICALL JNI_FN(setVocalFx)(JNIEnv*, jobject, jint track, jfloat reverb, jfloat comp, jfloat bright) {
+    if (gEngine) gEngine->core().setVocalFx(track, reverb, comp, bright);
+}
 // Nạp mẫu âm thật (mono float). Có thể gọi từ luồng nền: không dùng hàng đợi lệnh.
 JNIEXPORT jboolean JNICALL JNI_FN(loadSample)(JNIEnv* env, jobject, jint id, jfloatArray data, jint sampleRate) {
     if (!gEngine || !data) return JNI_FALSE;
