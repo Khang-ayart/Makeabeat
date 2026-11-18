@@ -852,7 +852,7 @@ static void testPadMidBarLaunchWaitsForBoundary() {
     core->padLaunch(0, 0, 2);
     renderAll(*core, 1, 480, 480);
     int64_t m = core->padMask(0);
-    CHECK((m >> 26) & 1, "queued bit missing (mask %llx)", static_cast<unsigned long long>(m));
+    CHECK((m >> 34) & 1, "queued bit missing (mask %llx)", static_cast<unsigned long long>(m));
     CHECK(!((m >> 2) & 1), "active too early");
     const auto out = renderAll(*core, 1, 72000 - 960 + 2000, 480);  // qua biên ô nhịp
     const auto on = findOnsets(out);
@@ -1108,6 +1108,38 @@ static void testKeyboardPadPitchAndRelease() {
     CHECK(peak(out, 96000, 2000) > 0.02f, "second chord missing");
 }
 
+static void testSynthRows() {
+    begin("Synth: lead đúng cao độ, pad vào chậm và nhả chậm, kết thúc sạch, không vượt biên, lặp giống hệt từng bit");
+    // Lead A4 (mã 256 + 69) qua clip của track Looper.
+    auto run = [&](int code, int dur) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {{0, dur, code, 100}}, testKit())}));
+        core->play(0);
+        return renderAll(*core, 1, 48000 * 4, 480);
+    };
+    const auto lead = run(256 + 69, 1920);
+    CHECK(peak(lead, 3000, 20000) > 0.05f, "lead silent (%f)", peak(lead, 3000, 20000));
+    const double f = estimateFreq(std::vector<float>(lead.begin() + 4000, lead.begin() + 40000), 48000, 440.0);
+    CHECK(std::fabs(1200.0 * std::log2(f / 440.0)) < 25.0, "lead A4 off: %.2f Hz", f);
+    CHECK(peak(lead, 48000 * 3, 48000) == 0.0f, "lead tail not silent");
+    // Pad: attack chậm (đầu nhỏ hơn giữa nốt rất nhiều), nhả chậm hơn lead.
+    const auto pad = run(384 + 57, 3840);
+    const float early = peak(pad, 0, 480), mid = peak(pad, 24000, 4000);
+    CHECK(mid > 0.03f && early < 0.25f * mid, "pad attack not slow (%f vs %f)", early, mid);
+    CHECK(peak(pad, 48000 * 4 - 2000, 2000) == 0.0f || peak(pad, 48000 * 4 - 2000, 2000) < 0.01f, "pad tail too long");
+    CHECK(run(256 + 60, 480) == run(256 + 60, 480), "synth not deterministic");
+    bool bounded = true;
+    for (float x : pad) if (!(x >= -1.0f && x <= 1.0f)) bounded = false;
+    for (float x : lead) if (!(x >= -1.0f && x <= 1.0f)) bounded = false;
+    CHECK(bounded, "synth out of range");
+    // Hàng synth cuối (pad 31) hiện đúng trên mask 64 bit, kể cả bit dấu.
+    auto core = padCore(padSet({{31, {3840, {{0, 100, 384 + 60, 960}}}}}));
+    core->padLaunch(0, 7, 31);
+    core->play(0);
+    renderAll(*core, 1, 480, 480);
+    CHECK((static_cast<uint64_t>(core->padMask(0)) >> 31) & 1, "pad 31 active bit missing (mask %llx)", static_cast<unsigned long long>(core->padMask(0)));
+}
+
 static void testKeyboardNotesInClip() {
     begin("Keyboard: nốt pitch >= 128 trong clip của track Looper phát như piano, pitch < 128 vẫn là pad; hit keyboard sai bị bỏ");
     auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
@@ -1119,9 +1151,9 @@ static void testKeyboardNotesInClip() {
     const double f = estimateFreq(std::vector<float>(out.begin() + 24000, out.end()), 48000, 440.0);
     CHECK(std::fabs(1200.0 * std::log2(f / 440.0)) < 10.0, "A4 off: %.2f Hz", f);
 
-    // Hit keyboard ngoài khoảng (128 + 128) hoặc chỉ số kit sai phải bị bỏ khi giải mã, không làm hỏng bài.
+    // Hit ngoài khoảng mã nốt (>= 512) hoặc chỉ số kit sai phải bị bỏ khi giải mã, không làm hỏng bài.
     auto bad = encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, testKit(),
-                                                  padSet({{20, {3840, {{0, 90, 300, 480}, {480, 90, 31, 0}, {960, 90, 128 + 60, 480}}}}}))});
+                                                  padSet({{20, {3840, {{0, 90, 600, 480}, {480, 90, 31, 0}, {960, 90, 128 + 60, 480}}}}}))});
     std::unique_ptr<Song> song(decodeSong(bad.data(), static_cast<int>(bad.size())));
     CHECK(song != nullptr, "decode failed");
     if (song) CHECK(song->tracks[0].pads[20].hits.size() == 1, "invalid hits kept: %zu", song->tracks[0].pads[20].hits.size());
@@ -1170,6 +1202,7 @@ int main() {
     testMasterFx();
     testKeyboardPadPitchAndRelease();
     testKeyboardNotesInClip();
+    testSynthRows();
 
     if (g_failures == 0) {
         std::printf("\nALL %d TESTS PASSED\n", g_tests);

@@ -81,10 +81,10 @@ Song* decodeSong(const int32_t* d, int n) {
             pp.hits.reserve(static_cast<size_t>(hits));
             for (int h = 0; h < hits; ++h, i += 4) {
                 const int idx = d[i + 2];
-                const bool keyNote = idx >= kKeyNoteBase && idx < kKeyNoteBase + 128;
+                const bool keyNote = idx >= kKeyNoteBase && idx < kMaxNoteCode;
                 if (d[i] < 0 || d[i] >= pp.len || idx < 0 || (!keyNote && idx >= kitCount)) continue;  // hit lạc: bỏ
                 pp.hits.push_back({d[i], std::clamp(d[i + 3], 1, 1 << 20), static_cast<uint8_t>(std::clamp(d[i + 1], 1, 127)),
-                                   static_cast<uint8_t>(idx)});
+                                   static_cast<uint16_t>(idx)});
             }
             std::stable_sort(pp.hits.begin(), pp.hits.end(),
                              [](const PadHit& a, const PadHit& b) { return a.start < b.start; });
@@ -97,7 +97,7 @@ Song* decodeSong(const int32_t* d, int n) {
             nt.start = std::max(0, d[i]);
             nt.dur = std::max(1, d[i + 1]);
             // Track Looper: pitch < 128 là pad trong kit, >= 128 là nốt keyboard (MIDI = pitch - 128).
-            nt.pitch = static_cast<uint8_t>(std::clamp(d[i + 2], 0, td.inst == Inst::Looper ? 255 : 127));
+            nt.pitch = static_cast<uint16_t>(std::clamp(d[i + 2], 0, td.inst == Inst::Looper ? kMaxNoteCode - 1 : 127));
             nt.vel = static_cast<uint8_t>(std::clamp(d[i + 3], 1, 127));
             td.notes.push_back(nt);
         }
@@ -324,7 +324,7 @@ void EngineCore::runPads(int track, int64_t tick) noexcept {
                 const uint64_t seed = static_cast<uint64_t>(phase) * 2654435761ULL + static_cast<uint64_t>(r.active) * 7919ULL +
                                       static_cast<uint64_t>(track) * 40503ULL + static_cast<uint64_t>(it->kitIdx) * 9973ULL + 1ULL;
                 if (it->kitIdx >= kKeyNoteBase) {
-                    startVoice(Inst::Piano, track, it->kitIdx - kKeyNoteBase, it->vel, tick + it->dur, true, seed);
+                    startVoice(Inst::Looper, track, it->kitIdx, it->vel, tick + it->dur, true, seed);  // nốt: startVoice chọn giọng theo mã
                 } else {
                     startVoice(Inst::Looper, track, it->kitIdx, it->vel, -1, true, seed);
                 }
@@ -377,8 +377,10 @@ Voice* EngineCore::allocateVoice() noexcept {
 void EngineCore::startVoice(Inst inst, int track, int note, int velocity, int64_t endTick, bool seq,
                             uint64_t seed) noexcept {
     track = std::clamp(track, 0, kMaxTracks - 1);
-    if (inst == Inst::Looper && note >= kKeyNoteBase) {  // nốt keyboard trong clip của track Looper
-        startVoice(Inst::Piano, track, note - kKeyNoteBase, velocity, endTick, seq, seed);
+    if (inst == Inst::Looper && note >= kKeyNoteBase) {  // nốt của track Looper: piano / synth lead / synth pad theo mã
+        const Inst voice = note >= kPadNoteBase ? Inst::SynthPad : note >= kLeadNoteBase ? Inst::SynthLead : Inst::Piano;
+        const int base = voice == Inst::SynthPad ? kPadNoteBase : voice == Inst::SynthLead ? kLeadNoteBase : kKeyNoteBase;
+        startVoice(voice, track, std::min(note - base, 127), velocity, endTick, seq, seed);
         return;
     }
     if (inst == Inst::Looper) {  // pad: âm lấy từ kit của track trong bài nhạc hiện tại
@@ -571,18 +573,18 @@ void EngineCore::render(float* out, int numFrames) noexcept {
     }
 
     for (int t = 0; t < kMaxTracks; ++t) {
-        int64_t m = 0;
+        uint64_t m = 0;
         for (int row = 0; row < kPadRows; ++row) {
             const PadRow& r = padRows_[t][row];
-            // Bit 0-23: pad đang chạy. Bit 24-47: pad đang đổi trạng thái ở đầu chu kỳ kế
+            // Bit 0-31: pad đang chạy. Bit 32-63: pad đang đổi trạng thái ở đầu chu kỳ kế
             // (pad chưa chạy mà bit này bật = sắp vào; pad đang chạy mà bit này bật = sắp rời).
-            if (r.active >= 0 && r.active < kMaxPads) m |= int64_t{1} << r.active;
-            if (r.queued >= 0 && r.queued < kMaxPads) m |= int64_t{1} << (24 + r.queued);
+            if (r.active >= 0 && r.active < kMaxPads) m |= uint64_t{1} << r.active;
+            if (r.queued >= 0 && r.queued < kMaxPads) m |= uint64_t{1} << (32 + r.queued);
             if (r.queued != kNoQueue && r.active >= 0 && r.active < kMaxPads && r.queued != r.active) {
-                m |= int64_t{1} << (24 + r.active);
+                m |= uint64_t{1} << (32 + r.active);
             }
         }
-        padMask_[t].store(m, std::memory_order_relaxed);
+        padMask_[t].store(static_cast<int64_t>(m), std::memory_order_relaxed);
     }
     const double pos = playing_ ? baseBeat_ + static_cast<double>(framesSinceBase_) * beatsPerFrame_ : 0.0;
     beatPosPublished_.store(pos, std::memory_order_relaxed);

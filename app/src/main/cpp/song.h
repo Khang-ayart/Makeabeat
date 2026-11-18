@@ -18,8 +18,10 @@ enum class Inst : uint8_t {
     DrumKit = 4,
     DrumPad = 5,
     Looper = 6,  // lưới pad: mỗi pad phát một âm tổng hợp theo Patch của kit
+    SynthLead = 7,  // synth lead/arp (nội bộ: do hàng Synth của Looper phát)
+    SynthPad = 8,   // synth pad/atmos: hợp âm nền kéo dài
 };
-constexpr int kInstCount = 7;
+constexpr int kInstCount = 9;
 
 inline bool isDrum(Inst i) { return i == Inst::DrumKit || i == Inst::DrumPad; }
 
@@ -57,7 +59,7 @@ struct Patch {
 
 // Looper: mỗi pad là một nhịp lặp. Pad i nằm ở hàng i / 4. Nhịp gồm các cú đánh (hit) trong một chu kỳ
 // dài len tick; engine tự phát lặp khi pad được bật, vào đúng đầu chu kỳ để mọi pad luôn khớp nhau.
-constexpr int kPadRows = 6;  // Kick, Snare, Hi-hat, Percussion, Bass, Keyboard
+constexpr int kPadRows = 8;  // Kick, Snare, Hi-hat, Percussion, Bass, Keyboard, Synth lead, Synth pad
 constexpr int kPadsPerRow = 4;
 constexpr int kMaxPads = kPadRows * kPadsPerRow;
 constexpr int kMaxPadLen = 8 * 3840;  // tối đa 8 ô nhịp
@@ -65,9 +67,12 @@ struct PadHit {
     int32_t start;    // tick trong chu kỳ, [0, len)
     int32_t dur;      // độ dài nốt (chỉ dùng cho nốt keyboard)
     uint8_t vel;
-    uint8_t kitIdx;   // < 128: phát âm số kitIdx trong kit của track; >= 128: nốt keyboard, MIDI = kitIdx - 128
+    uint16_t kitIdx;  // < 128: âm số kitIdx trong kit; 128..255: nốt piano (MIDI = kitIdx - 128); 256..383: synth lead; 384..511: synth pad
 };
 constexpr int kKeyNoteBase = 128;
+constexpr int kLeadNoteBase = 256;
+constexpr int kPadNoteBase = 384;
+constexpr int kMaxNoteCode = 512;  // mã nốt tối đa (loại trừ)
 struct PadPattern {
     int32_t len = 0;  // 0 = pad trống
     std::vector<PadHit> hits;  // đã sắp theo start
@@ -83,7 +88,7 @@ struct Sample {
 struct Note {
     int32_t start;  // tick tuyệt đối trong bài
     int32_t dur;    // độ dài (tick)
-    uint8_t pitch;
+    uint16_t pitch;   // Looper: mã nốt như PadHit::kitIdx
     uint8_t vel;
 };
 
