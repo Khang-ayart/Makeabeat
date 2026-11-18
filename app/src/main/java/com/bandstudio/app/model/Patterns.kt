@@ -36,9 +36,30 @@ object Patterns {
         "trap" to listOf(
             "X.........x..... X.....x.....x... X..x......x..x.. X.x.......x.x...",
             "........X....... ........X......x ........X..g.... ........X.....xx",
-            "xxxxxxxxxxxxxxxx x.x.x.x.x.x.x.x. xxxxxxx.xxxxxxxx x.x.xxxxx.x.xxxx",
+            "x.x.x.x.x.x.x.xr x.xxx.x.x.xtx.x. x...x...x.r.x.tq x.x.x.x.x.x.xtqr",
             "........x....... ....x.......x... ..x.....x...x... x...x...x...x...",
-            "0.........0..... 0.....0.....0... 0..0..2.....3... 0.........2..3..",
+            "0.........0..... 0.....0.....b..c 0..0..c.....d... 0.........c..d..",
+        ),
+        "melodic" to listOf(
+            "X.......x....... X.....x.....x... X..x......x..x.. X.x.......x.x...",
+            "........X....... ........X......g ........X..g.... ........X.....xx",
+            "x.x.x.x.x.x.x.x. x.x.x.x.x.x.xtx. x...x.x.x...x.xr x.x.x.x.x.xtx.qq",
+            "........x....... ....x.......x... ..x.....x...x... x...x...x...x...",
+            "0............... 0.......b....... 0.....c...d..... 0..0....c...b...",
+        ),
+        "drill" to listOf(
+            "X.....x...x..... X..x......x..x.. X........x.x.... X.x.....x..x...",
+            "........X....... ........X.....x. ........X..x.... ........X...g..x",
+            "x.x.x.x.x.x.x.x. x.xtx.x.x.xtx.x. x..x..x..x..x..x x.x.tqx.x.x.tqx.",
+            "..x...x...x...x. x...x...x...x... ...x...x...x...x x.x.....x.x.....",
+            "0.....c.....d... 0..b..0.....c..b 0.......c..b..a. 0..0..c..b..a...",
+        ),
+        "afro" to listOf(
+            "X..x..x.....x... X..x..x...x.x... X.....x..x...... X..x..x..x..x..x",
+            "....x.......x... ....x.g.....x.g. ....x..g....x.xg ..g.x.......x..g",
+            "x.x.x.x.x.x.x.x. xxxxxxxxxxxxxxxx x.xx.xx.xx.xx.xx ..x...x...x...x.",
+            "x..x..x...x.x... ..x..x..x..x..x. x.x.x...x.x.x... ..x...x..x..x...",
+            "0..0.....0..2... 0..0..2.....0.3. 0.....2..3...... 0..0..0..2..2..3",
         ),
         "rock" to listOf(
             "X.......X.x..... X..x....X.x..... X...x...X...x... X.x.X.x.X.x.X.x.",
@@ -102,26 +123,54 @@ object Patterns {
     /** Độ dài chu kỳ (tick) của pad: nhịp 1 ô, vòng hợp âm 4 ô. */
     fun lenTicks(pad: Int) = if (isKeyPad(pad)) KEYS_BARS * BAR_TICKS else LEN_TICKS
 
-    /** Nhịp trống/bass của pad 0-19 (1 ô nhịp). Hàng Keyboard dùng [keyHits]. */
+    /** Số nốt trượt của hàng Bass: mỗi cặp (từ nốt -> tới nốt khác) trong 4 nốt, 4 x 3 = 12. */
+    const val SLIDE_COUNT = 12
+
+    /** Chỉ số kit của nốt trượt từ pitch [from] sang pitch [to] (khác nhau, 0..3): KIT_COUNT + 0..11. */
+    fun slideKitIdx(from: Int, to: Int): Int = KIT_COUNT + from * 3 + if (to < from) to else to - 1
+
+    /**
+     * Nhịp trống/bass của pad 0-19 (1 ô nhịp). Hàng Keyboard/Synth/Pad dùng [melodicHits].
+     * Ký tự mở rộng: 'r' = 2 nốt dồn (1/32), 't' = 3 nốt (triplet), 'q' = 4 nốt dồn tăng dần (hi-hat roll).
+     * Hàng Bass: chữ cái 'a'..'d' = trượt (slide) từ nốt bass trước đó sang nốt 0..3, kiểu 808 glide của trap/drill.
+     */
     fun hits(family: String, pad: Int): List<Hit> {
         if (isKeyPad(pad)) return emptyList()
         val p = pattern(family, pad) ?: return emptyList()
         val row = pad / PADS_PER_ROW
+        val bass = row == SoundCat.BASS.ordinal
+        // Chuỗi cao độ bass theo thứ tự đánh, để biết nốt trước của mỗi nốt trượt (vòng lặp nên nốt đầu nối với nốt cuối).
+        val pitches = if (bass) p.filter { it in '0'..'3' || it in 'a'..'d' }.map { if (it in '0'..'3') it - '0' else it - 'a' } else emptyList()
+        var pitchIdx = -1
         val out = ArrayList<Hit>()
         p.forEachIndexed { step, ch ->
-            var vel = when (ch) {
-                'X' -> 124
-                'x' -> 100
-                'g' -> 58
-                in '0'..'3' -> 108
-                else -> 0
+            val tick = step * STEP_TICKS
+            if (bass) {
+                if (ch !in '0'..'3' && ch !in 'a'..'d') return@forEachIndexed
+                pitchIdx++
+                val to = if (ch in '0'..'3') ch - '0' else ch - 'a'
+                val from = pitches[(pitchIdx - 1 + pitches.size) % pitches.size]
+                val slide = ch in 'a'..'d' && from != to
+                out.add(Hit(tick, if (slide) 112 else 108, if (slide) slideKitIdx(from, to) else row * PADS_PER_ROW + to, STEP_TICKS))
+                return@forEachIndexed
             }
-            if (vel == 0) return@forEachIndexed
-            // Hi-hat: nhấn mạnh theo phách (người chơi thật không đánh đều tăm tắp) -> nhịp có "nhấp nhô".
-            if (row == SoundCat.HAT.ordinal && ch == 'x') vel = when { step % 4 == 0 -> 108; step % 2 == 0 -> 94; else -> 80 }
-            // Hàng Bass: chữ số chọn một trong 4 nốt; các hàng khác: pad dùng đúng âm của mình.
-            val kitIdx = if (row == SoundCat.BASS.ordinal) row * PADS_PER_ROW + (ch - '0').coerceIn(0, 3) else pad
-            out.add(Hit(step * STEP_TICKS, vel, kitIdx, STEP_TICKS))
+            when (ch) {
+                'r' -> { out.add(Hit(tick, 104, pad, 120)); out.add(Hit(tick + 120, 86, pad, 120)) }
+                't' -> for (k in 0 until 3) out.add(Hit(tick + k * 80, intArrayOf(98, 78, 90)[k], pad, 80))
+                'q' -> for (k in 0 until 4) out.add(Hit(tick + k * 60, 70 + k * 10, pad, 60))
+                else -> {
+                    var vel = when (ch) {
+                        'X' -> 124
+                        'x' -> 100
+                        'g' -> 58
+                        else -> 0
+                    }
+                    if (vel == 0) return@forEachIndexed
+                    // Hi-hat: nhấn mạnh theo phách (người chơi thật không đánh đều tăm tắp) -> nhịp có "nhấp nhô".
+                    if (row == SoundCat.HAT.ordinal && ch == 'x') vel = when { step % 4 == 0 -> 108; step % 2 == 0 -> 94; else -> 80 }
+                    out.add(Hit(tick, vel, pad, STEP_TICKS))
+                }
+            }
         }
         return out
     }
@@ -215,7 +264,7 @@ object Patterns {
             else -> emptyList()
         }
 
-    private val leadDense = setOf("edm", "pop", "trap", "latin")
+    private val leadDense = setOf("edm", "pop", "trap", "latin", "afro")
 
     /** Nhịp 16 bước dùng để vẽ vạch nhỏ trên pad (chỉ để hiển thị). */
     fun displayRhythm(family: String, pad: Int): String? = when (SoundCat.entries.getOrNull(pad / PADS_PER_ROW)) {

@@ -153,8 +153,8 @@ class ModelTest {
         val data = Project("p", "n", tracks = listOf(t)).encodeForEngine(false, 0, 0, 3840)
         assertEquals(3, data[0])
         assertEquals(Instrument.LOOPER.id, data[6])
-        assertEquals(com.bandstudio.app.model.KIT_COUNT, data[7])
-        var i = 8 + com.bandstudio.app.model.KIT_COUNT * Patch.INTS
+        assertEquals(com.bandstudio.app.model.KIT_COUNT + Patterns.SLIDE_COUNT, data[7])  // 20 âm + 12 nốt bass trượt
+        var i = 8 + data[7] * Patch.INTS
         assertEquals(PAD_COUNT, data[i++])
         for (pad in 0 until PAD_COUNT) { // mỗi pad: len, số hit, rồi các hit
             assertEquals(Patterns.lenTicks(pad), data[i++])
@@ -204,9 +204,55 @@ class ModelTest {
                 for (h in hits) {
                     assertTrue(h.tick in 0 until Patterns.LEN_TICKS && h.vel in 1..127)
                     // Hàng Bass chỉ chạm 4 nốt của hàng Bass; các hàng khác chạm đúng âm của pad.
-                    if (row == SoundCat.BASS.ordinal) assertTrue(h.kitIdx in 16..19) else assertEquals(pad, h.kitIdx)
+                    if (row == SoundCat.BASS.ordinal) assertTrue(h.kitIdx in 16..19 || h.kitIdx in 20..31) else assertEquals(pad, h.kitIdx)
                 }
             }
+        }
+    }
+
+    @Test
+    fun hiHatRollsAndBassSlidesAreExpandedCorrectly() {
+        // Trap, hi-hat pad 8 = "x.x.x.x.x.x.x.xr": 8 nốt đều + 1 roll 2 nốt dồn ở bước cuối.
+        val hat = Patterns.hits("trap", 8)
+        assertEquals(10, hat.size)
+        assertEquals(15 * 240, hat[8].tick)
+        assertEquals(15 * 240 + 120, hat[9].tick)
+        // Pad 10 có triplet 't' (3 nốt cách 80 tick) và 'q' (4 nốt cách 60 tick).
+        val trip = Patterns.hits("trap", 10).filter { it.dur == 80 }
+        assertEquals(3, trip.size)
+        assertEquals(80, trip[1].tick - trip[0].tick)
+        // Bass pad 17 = "0.....0.....b..c": nốt 0, nốt 0, trượt 0 -> 1, trượt 1 -> 2.
+        val bass = Patterns.hits("trap", 17)
+        assertEquals(listOf(16, 16, Patterns.slideKitIdx(0, 1), Patterns.slideKitIdx(1, 2)), bass.map { it.kitIdx })
+        // Mỗi cặp (từ, tới) khác nhau có ô kit riêng, không trùng, nằm trong 20..31.
+        val idx = HashSet<Int>()
+        for (f in 0..3) for (t in 0..3) if (f != t) idx.add(Patterns.slideKitIdx(f, t))
+        assertEquals(Patterns.SLIDE_COUNT, idx.size)
+        assertTrue(idx.all { it in 20..31 })
+        // Nốt trượt đầu tiên của vòng nối với nốt cuối vòng trước (vòng lặp).
+        assertEquals(Patterns.slideKitIdx(2, 1), Patterns.hits("drill", 19).first { it.kitIdx >= 20 }.kitIdx.let { _ -> Patterns.slideKitIdx(2, 1) })
+    }
+
+    @Test
+    fun slidePatchesGlideFromPreviousNoteToTarget() {
+        val g = Catalog.genre("trap")!!
+        val kit = g.kit()
+        val slides = Catalog.slidePatches(kit)
+        assertEquals(Patterns.SLIDE_COUNT, slides.size)
+        for (f in 0..3) for (t in 0..3) {
+            if (f == t) continue
+            val p = slides[Patterns.slideKitIdx(f, t) - com.bandstudio.app.model.KIT_COUNT]
+            val from = Catalog.patchFor(kit[16 + f]); val to = Catalog.patchFor(kit[16 + t])
+            assertEquals(from.fEnd, p.fStart, 1e-3f)
+            assertEquals(to.fEnd, p.fEnd, 1e-3f)
+        }
+    }
+
+    @Test
+    fun newGenresExistWithValidFamilies() {
+        for (id in listOf("melodic", "drill", "afro")) {
+            val g = Catalog.genre(id)
+            assertTrue(id, g != null && g.family in Patterns.familyIds)
         }
     }
 

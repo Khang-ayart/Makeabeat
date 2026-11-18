@@ -130,9 +130,12 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
             }
         }
         out.add(t.instrument.id)
-        val kit = if (t.instrument.isLooper) t.kit.take(MAX_KIT) else emptyList()
-        out.add(kit.size)
+        val kit = if (t.instrument.isLooper) t.kit.take(KIT_COUNT) else emptyList()
+        // Kit gửi sang engine = 20 âm + 12 âm bass trượt (nốt trượt của hàng Bass trỏ tới các ô 20..31).
+        val slides = if (kit.size == KIT_COUNT) Catalog.slidePatches(kit) else emptyList()
+        out.add(kit.size + slides.size)
         kit.forEachIndexed { i, pad -> Catalog.patchFor(t.genreId, i, pad).encodeTo(out) }
+        slides.forEach { it.encodeTo(out) }
         if (t.instrument.isLooper && kit.isNotEmpty()) {
             val genre = Catalog.genre(t.genreId)
             out.add(PAD_COUNT)

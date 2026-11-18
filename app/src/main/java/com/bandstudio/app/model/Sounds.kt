@@ -196,7 +196,7 @@ object Catalog {
      * Kick và bass giữ nguyên.
      */
     fun toneFor(genreId: String, cat: SoundCat): Tone {
-        val soft = genreId == "rnb" || genreId == "ballad" || genreId == "jazz" || genreId == "acoustic"
+        val soft = genreId == "rnb" || genreId == "ballad" || genreId == "jazz" || genreId == "acoustic" || genreId == "melodic"
         return when (cat) {
             SoundCat.HAT -> when {
                 genreId == "lofi" -> Tone(0.50f, 0.55f, 0f)
@@ -218,6 +218,23 @@ object Catalog {
             }
             else -> Tone(0f, 1f, 0f)
         }
+    }
+
+    /**
+     * 12 âm bass "trượt" (808 glide): với mỗi cặp nốt khác nhau trong 4 nốt bass của [kit], một patch bắt đầu ở cao độ nốt
+     * trước và trượt về nốt sau. Thứ tự khớp [Patterns.slideKitIdx]; dùng làm các ô kit 20..31 khi gửi sang engine.
+     */
+    fun slidePatches(kit: List<PadSpec>): List<Patch> {
+        val bass = kit.drop((SoundCat.BASS.ordinal) * PADS_PER_ROW).take(PADS_PER_ROW)
+        if (bass.size < PADS_PER_ROW) return List(Patterns.SLIDE_COUNT) { Patch.SILENT }
+        val out = ArrayList<Patch>()
+        for (from in 0 until PADS_PER_ROW) for (to in 0 until PADS_PER_ROW) {
+            if (from == to) continue
+            val target = patchFor(bass[to])
+            val start = patchFor(bass[from])
+            out.add(target.copy(fStart = start.fEnd, pitchTauMs = 80f))
+        }
+        return out
     }
 
     /** Patch của pad thứ [index] trong kit của thể loại [genreId], đã áp xử lý màu âm. */
@@ -273,6 +290,24 @@ object Catalog {
             listOf("hat.trap", "hat.closed", "hat.open", "hat.tight"),
             listOf("perc.snap", "perc.cowbell", "perc.tom", "perc.crash"),
             "bass.808dist", true, listOf(0, 3, 7, 10)),
+        g("melodic", "Melodic Trap", 140, "melodic",
+            listOf("kick.boom", "kick.deep", "kick.soft", "kick.tight"),
+            listOf("snare.clap", "snare.soft", "snare.trap", "snare.rim"),
+            listOf("hat.soft", "hat.trap", "hat.tight", "hat.closed"),
+            listOf("perc.snap", "perc.tom", "perc.shaker", "perc.crash"),
+            "bass.808long", true, listOf(0, 3, 7, 10)),
+        g("drill", "Drill", 142, "drill",
+            listOf("kick.deep", "kick.boom", "kick.punch", "kick.tight"),
+            listOf("snare.crack", "snare.trap", "snare.clap", "snare.rim"),
+            listOf("hat.trap", "hat.tight", "hat.closed", "hat.open"),
+            listOf("perc.snap", "perc.cowbell", "perc.tom", "perc.crash"),
+            "bass.808dist", true, listOf(0, 3, 7, 10)),
+        g("afro", "Afrobeats", 102, "afro",
+            listOf("kick.tight", "kick.punch", "kick.soft", "kick.edm"),
+            listOf("snare.rim", "snare.pop", "snare.soft", "snare.clap"),
+            listOf("hat.shaker", "hat.tight", "hat.closed", "hat.soft"),
+            listOf("perc.conga", "perc.bongo", "perc.shaker", "perc.cowbell"),
+            "bass.pluck", false, listOf(0, 5, 7, 9)),
         g("lofi", "Lo-fi", 78, "boombap",
             listOf("kick.lofi", "kick.soft", "kick.deep", "kick.tight"),
             listOf("snare.lofi", "snare.soft", "snare.brush", "snare.rim"),
