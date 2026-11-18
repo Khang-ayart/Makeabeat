@@ -279,6 +279,20 @@ class ModelTest {
         assertEquals(0f, kick.send, 0f)
     }
 
+    @Test
+    fun randomizerAlwaysGivesValidBeatWithBackbone() {
+        val seen = HashSet<List<Int>>()
+        repeat(200) { seed ->
+            val pick = com.bandstudio.app.model.Randomizer.pick(kotlin.random.Random(seed))
+            assertEquals(SoundCat.entries.size, pick.size)
+            pick.forEachIndexed { row, pad -> assertTrue(pad == -1 || pad / PADS_PER_ROW == row) }
+            for (row in intArrayOf(0, 1, 2, 4)) assertTrue("thiếu hàng $row", pick[row] >= 0)  // kick, snare, hat, bass luôn có
+            assertEquals(pick.toList(), com.bandstudio.app.model.Randomizer.pick(kotlin.random.Random(seed)).toList())
+            seen.add(pick.toList())
+        }
+        assertTrue("ít biến hóa: ${seen.size}", seen.size > 50)
+    }
+
     // ---- Mẫu âm thật ----
 
     @Test

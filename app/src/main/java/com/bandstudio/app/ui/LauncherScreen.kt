@@ -38,6 +38,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -143,7 +144,17 @@ private fun LoopPad(vm: StudioViewModel, pad: Int, title: String, family: String
         modifier
             .clip(shape)
             .background(fill)
-            .pointerInput(pad) { detectTapGestures(onPress = { vm.tapPad(pad) }) },
+            .pointerInput(pad) {
+                detectTapGestures(onPress = {
+                    // Chạm nhanh = bật/tắt pad; giữ lâu = nghe thử âm của pad, thả ra thì dừng (không đổi beat).
+                    val released = withTimeoutOrNull(350) { tryAwaitRelease() }
+                    when (released) {
+                        true -> vm.tapPad(pad)
+                        null -> { vm.auditionPad(pad, true); tryAwaitRelease(); vm.auditionPad(pad, false) }
+                        else -> {}
+                    }
+                })
+            },
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.fillMaxSize().padding(6.dp)) {
@@ -191,6 +202,7 @@ private fun LauncherTransport(vm: StudioViewModel, bpm: Int) {
                 onClick = vm::toggleLauncherRecord, size = 48.dp,
                 color = if (vm.launcherRecording) Color(0xFFE5334B) else cs.surfaceVariant,
             ) { RecordGlyph(Modifier.size(26.dp), if (vm.launcherRecording) Color.White else Color(0xFFE5334B)) }
+            OutlinedButton(onClick = vm::randomizeLauncher) { Text("Ngẫu nhiên") }
             ToggleChip("Metronome", vm.metronome, vm::toggleMetronome)
             Text("BPM", style = MaterialTheme.typography.labelLarge)
             OutlinedButton(
@@ -203,7 +215,7 @@ private fun LauncherTransport(vm: StudioViewModel, bpm: Int) {
         }
         Text(
             if (vm.launcherRecording) "Đang ghi: phần bạn chơi sẽ thành clip khi bấm ● lần nữa."
-            else "Beat gợi ý đang chạy sẵn. Chạm pad để thêm hoặc đổi nhịp, chạm lại để tắt; pad mới vào ở đầu ô nhịp kế tiếp. Bấm ● để ghi thành clip.",
+            else "Beat gợi ý đang chạy sẵn. Chạm pad để thêm hoặc đổi nhịp, chạm lại để tắt, giữ pad để nghe thử; pad mới vào ở đầu ô nhịp kế tiếp. Bấm Ngẫu nhiên để ra một beat mới. Bấm ● để ghi thành clip.",
             style = MaterialTheme.typography.bodySmall,
             color = cs.onSurfaceVariant,
         )

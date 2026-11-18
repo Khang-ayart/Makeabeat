@@ -20,6 +20,8 @@ import com.bandstudio.app.model.PADS_PER_ROW
 import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.DEFAULT_KEY
 import com.bandstudio.app.model.PAD_COUNT
+import com.bandstudio.app.model.Patterns
+import com.bandstudio.app.model.Randomizer
 import com.bandstudio.app.model.SoundCat
 import com.bandstudio.app.model.NoteEvent
 import com.bandstudio.app.model.PPQ
@@ -338,6 +340,36 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             else -> AudioEngine.padLaunch(idx, row, pad) // chưa chạy, hoặc đang chờ tắt -> huỷ lệnh tắt
         }
         startLauncherTransport()
+    }
+
+    /** Nút "Ngẫu nhiên": chọn tổ hợp pad hợp thể loại, vào ở đầu ô nhịp kế tiếp. */
+    fun randomizeLauncher() {
+        val idx = launcherIndex()
+        if (idx < 0) return
+        val picks = Randomizer.pick(kotlin.random.Random(System.nanoTime()))
+        picks.forEachIndexed { row, pad -> AudioEngine.padLaunch(idx, row, pad) }
+        startLauncherTransport()
+    }
+
+    private val auditioned = ArrayList<Int>()
+
+    /** Giữ pad để nghe thử âm của nó (không vào beat). Keyboard phát hợp âm đầu của vòng; thả ra thì nhả phím. */
+    fun auditionPad(pad: Int, down: Boolean) {
+        val idx = launcherIndex()
+        if (idx < 0 || pad !in 0 until PAD_COUNT) return
+        val t = project?.tracks?.getOrNull(idx) ?: return
+        if (down) {
+            if (Patterns.isKeyPad(pad)) {
+                val g = Catalog.genre(t.genreId) ?: return
+                val notes = Patterns.chordNotes(t.keyRoot, Patterns.progression(g.minor, pad)[0])
+                for (n in notes) { AudioEngine.noteOn(Instrument.LOOPER.id, idx, Patterns.KEY_NOTE_BASE + n, 90); auditioned.add(n) }
+            } else {
+                AudioEngine.noteOn(Instrument.LOOPER.id, idx, pad, 110)
+            }
+        } else {
+            for (n in auditioned) AudioEngine.noteOff(idx, n)
+            auditioned.clear()
+        }
     }
 
     private fun startLauncherTransport() {
