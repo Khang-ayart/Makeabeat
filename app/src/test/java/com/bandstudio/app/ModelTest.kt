@@ -6,6 +6,7 @@ import com.bandstudio.app.model.Instrument
 import com.bandstudio.app.model.NoteEvent
 import com.bandstudio.app.model.PAD_COUNT
 import com.bandstudio.app.model.PADS_PER_ROW
+import com.bandstudio.app.model.PadSpec
 import com.bandstudio.app.model.Patch
 import com.bandstudio.app.model.Patterns
 import com.bandstudio.app.model.Project
