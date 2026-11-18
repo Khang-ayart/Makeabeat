@@ -321,15 +321,32 @@ class ModelTest {
     @Test
     fun swingDelaysOnlyOffbeatSixteenthsAndKeepsLoopLength() {
         val jazz = Catalog.genre("jazz")!!
-        val straight = Patterns.hits(jazz.family, 8)   // hàng hi-hat
+        val straight = Patterns.phrase(jazz.family, 8)   // hàng hi-hat, cụm 4 ô nhịp
         val swung = Patterns.padHits(jazz, com.bandstudio.app.model.DEFAULT_KEY, 8)
         assertEquals(straight.size, swung.size)
         straight.zip(swung).forEach { (a, b) ->
-            if (a.tick % 480 == 240) assertTrue(b.tick > a.tick && b.tick < Patterns.LEN_TICKS) else assertEquals(a.tick, b.tick)
+            if (a.tick % 480 == 240) assertTrue(b.tick > a.tick && b.tick < (a.tick / Patterns.LEN_TICKS + 1) * Patterns.LEN_TICKS) else assertEquals(a.tick, b.tick)
         }
         // Thể loại không swing giữ nguyên.
         val pop = Catalog.genre("pop")!!
-        assertEquals(Patterns.hits(pop.family, 8), Patterns.padHits(pop, com.bandstudio.app.model.DEFAULT_KEY, 8))
+        assertEquals(Patterns.phrase(pop.family, 8), Patterns.padHits(pop, com.bandstudio.app.model.DEFAULT_KEY, 8))
+    }
+
+    @Test
+    fun drumPhrasesRepeatBaseBarsAndEndWithAFillInsideTheLoop() {
+        for (g in Catalog.genres) for (pad in 0 until com.bandstudio.app.model.KIT_COUNT) {
+            val base = Patterns.hits(g.family, pad)
+            val ph = Patterns.phrase(g.family, pad)
+            assertEquals("${g.id}/$pad dài 4 ô", 4 * Patterns.LEN_TICKS, Patterns.lenTicks(pad))
+            assertTrue(ph.isNotEmpty() && ph.all { it.tick in 0 until Patterns.lenTicks(pad) && it.vel in 1..127 && it.dur > 0 })
+            assertEquals(ph.sortedBy { it.tick }, ph)
+            // Ô 1 giữ nguyên nhịp gốc (đổi sang pad mới vẫn nghe đúng nhịp), ô 4 khác ô 1 (có fill) trừ khi bass đã trống đoạn cuối.
+            assertEquals(base, ph.filter { it.tick < Patterns.LEN_TICKS })
+            val row = pad / PADS_PER_ROW
+            val bar4 = ph.filter { it.tick >= 3 * Patterns.LEN_TICKS }.map { it.copy(tick = it.tick - 3 * Patterns.LEN_TICKS) }
+            if (row != SoundCat.BASS.ordinal) assertTrue("${g.id}/$pad ô 4 chưa có fill", bar4 != base || row == SoundCat.KICK.ordinal || row == SoundCat.PERC.ordinal)
+            assertEquals(ph, Patterns.phrase(g.family, pad))  // xác định, không ngẫu nhiên
+        }
     }
 
     @Test

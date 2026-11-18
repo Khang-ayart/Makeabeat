@@ -336,7 +336,9 @@ void EngineCore::runPads(int track, int64_t tick) noexcept {
         if (r.queued != kNoQueue) {
             const int ref = r.queued >= 0 ? r.queued : r.active;  // độ dài chu kỳ quyết định thời điểm đổi
             const int64_t len = (ref >= 0 && ref < padN) ? td.pads[static_cast<size_t>(ref)].len : 0;
-            if (len <= 0 || tick % len == 0) {
+            // Hàng trống/bass (0..4) có thể dài 4 ô nhịp (có fill) nhưng vẫn đổi pad ở đầu mỗi ô nhịp cho bấm là nghe.
+            const int64_t quant = (row < 5 && len > 3840) ? 3840 : len;
+            if (quant <= 0 || tick % quant == 0) {
                 r.active = r.queued;
                 r.queued = kNoQueue;
             }

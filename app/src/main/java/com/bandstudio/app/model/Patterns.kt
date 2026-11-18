@@ -120,8 +120,8 @@ object Patterns {
         else -> KEY_NOTE_BASE
     }
 
-    /** Độ dài chu kỳ (tick) của pad: nhịp 1 ô, vòng hợp âm 4 ô. */
-    fun lenTicks(pad: Int) = if (isKeyPad(pad)) KEYS_BARS * BAR_TICKS else LEN_TICKS
+    /** Độ dài chu kỳ (tick) của pad: trống/bass và hợp âm đều là một cụm 4 ô nhịp (ô cuối của trống/bass là fill). */
+    fun lenTicks(pad: Int) = KEYS_BARS * BAR_TICKS
 
     /** Số nốt trượt của hàng Bass: mỗi cặp (từ nốt -> tới nốt khác) trong 4 nốt, 4 x 3 = 12. */
     const val SLIDE_COUNT = 12
@@ -256,7 +256,51 @@ object Patterns {
 
     /** Tất cả cú đánh của một pad (trống/bass/hợp âm) để gửi engine. */
     fun padHits(genre: Genre, key: Int, pad: Int): List<Hit> =
-        if (isKeyPad(pad)) melodicHits(genre.family, pad, key, genre.minor) else swung(hits(genre.family, pad), swingOf(genre.id))
+        if (isKeyPad(pad)) melodicHits(genre.family, pad, key, genre.minor) else swung(phrase(genre.family, pad), swingOf(genre.id))
+
+    /** Độ lệch velocity ổn định (không ngẫu nhiên) theo vị trí, để mỗi ô nhịp nhấn hơi khác nhau mà vòng lặp vẫn khớp từng bit. */
+    private fun jitter(pad: Int, bar: Int, tick: Int): Int = Math.floorMod(pad * 31 + bar * 17 + (tick / STEP_TICKS) * 7, 9) - 4
+
+    /**
+     * Cụm 4 ô nhịp của pad trống/bass: ô 1 và 3 là nhịp gốc, ô 2 nhấn nhẹ khác đi, ô 4 là fill dẫn sang cụm sau.
+     * Fill: kick đạp thêm cuối ô, snare dồn, hi-hat roll, perc thêm nốt, bass chừa chỗ cho fill.
+     */
+    fun phrase(family: String, pad: Int): List<Hit> {
+        val base = hits(family, pad)
+        val row = pad / PADS_PER_ROW
+        val out = ArrayList<Hit>()
+        for (bar in 0 until KEYS_BARS) {
+            val off = bar * BAR_TICKS
+            val lastBeat = 12 * STEP_TICKS
+            var bh = base.map { h ->
+                val v = if (bar == 0) h.vel else (h.vel + jitter(pad, bar, h.tick)).coerceIn(1, 127)
+                h.copy(tick = h.tick + off, vel = v)
+            }
+            if (bar == KEYS_BARS - 1) {
+                when (row) {
+                    SoundCat.KICK.ordinal -> if (base.none { it.tick >= 14 * STEP_TICKS }) bh = bh + Hit(off + 14 * STEP_TICKS, 96, pad, STEP_TICKS)
+                    SoundCat.SNARE.ordinal -> {
+                        val rest = bh.filter { it.tick - off < 14 * STEP_TICKS }
+                        bh = rest + listOf(
+                            Hit(off + 14 * STEP_TICKS, 92, pad, 120), Hit(off + 14 * STEP_TICKS + 120, 100, pad, 120),
+                            Hit(off + 15 * STEP_TICKS, 108, pad, 120), Hit(off + 15 * STEP_TICKS + 120, 120, pad, 120))
+                    }
+                    SoundCat.HAT.ordinal -> {
+                        val rest = bh.filter { it.tick - off < 14 * STEP_TICKS }
+                        bh = rest + (0 until 8).map { k -> Hit(off + 14 * STEP_TICKS + k * 60, 66 + k * 7, pad, 60) }
+                    }
+                    SoundCat.PERC.ordinal -> if (base.none { it.tick in 13 * STEP_TICKS until 16 * STEP_TICKS }) bh = bh + Hit(off + 13 * STEP_TICKS, 84, pad, STEP_TICKS) + Hit(off + 15 * STEP_TICKS, 72, pad, STEP_TICKS)
+                    SoundCat.BASS.ordinal -> {
+                        val kept = bh.filter { it.tick - off < lastBeat + 2 * STEP_TICKS }
+                        if (kept.isNotEmpty()) bh = kept
+                    }
+                    else -> Unit
+                }
+            }
+            out.addAll(bh)
+        }
+        return out.sortedBy { it.tick }
+    }
 
     /** Hàng giai điệu: Keyboard (hợp âm), Synth lead (arp / pluck / hook / stab), Synth pad (hợp âm nền kéo dài). */
     fun melodicHits(family: String, pad: Int, key: Int, minor: Boolean): List<Hit> =
@@ -351,7 +395,7 @@ object Patterns {
         if (swing <= 0f) return hits
         val shift = (STEP_TICKS * swing).toInt()
         return hits.map { h ->
-            if (h.tick % (2 * STEP_TICKS) == STEP_TICKS) h.copy(tick = minOf(h.tick + shift, LEN_TICKS - 1)) else h
+            if (h.tick % (2 * STEP_TICKS) == STEP_TICKS) h.copy(tick = minOf(h.tick + shift, (h.tick / LEN_TICKS + 1) * LEN_TICKS - 1)) else h
         }
     }
 }

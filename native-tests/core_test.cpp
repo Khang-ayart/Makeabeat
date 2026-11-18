@@ -867,6 +867,22 @@ static void testPadMidBarLaunchWaitsForBoundary() {
     CHECK(((m >> 26) & 1) == 0, "queued bit not cleared");
 }
 
+static void testFourBarDrumPadSwitchesOnBarBoundary() {
+    begin("Pad trống 4 ô nhịp: đổi pad vẫn ở đầu ô nhịp (không chờ hết 4 ô), cụm giữ pha theo bài nên fill rơi ô 4");
+    // Hàng 0 (kick), pad dài 4 ô nhịp, cú đánh ở đầu ô 3 (tick 7680) và ô 4 (tick 11520).
+    auto core = padCore(padSet({{0, {15360, {{7680, 100, 1}, {11520, 100, 3}}}}}));
+    core->play(4800);  // ô 2, phách 2
+    renderAll(*core, 1, 480, 480);
+    core->padLaunch(0, 0, 0);
+    renderAll(*core, 1, 480, 480);
+    const auto on = findOnsets(renderAll(*core, 1, 72000 - 960 + 96000 + 2000, 480));
+    CHECK(on.size() == 2, "onsets %zu", on.size());
+    if (on.size() == 2) {
+        CHECK(std::llabs(on[0] - (72000 - 960)) <= 1, "first %lld", static_cast<long long>(on[0]));
+        CHECK(std::llabs(on[1] - (72000 - 960 + 96000)) <= 1, "second %lld", static_cast<long long>(on[1]));
+    }
+}
+
 static void testPadRowExclusiveSwitchAndStop() {
     begin("Pad lặp: mỗi hàng một pad (đổi pad ở đầu ô nhịp), bấm tắt thì dừng ở đầu ô nhịp");
     // pad0: hi-hat đầu ô nhịp. pad1 (cùng hàng): kick ở giữa ô nhịp.
@@ -1311,6 +1327,7 @@ int main() {
     testPadMidBarLaunchWaitsForBoundary();
     testPadRowExclusiveSwitchAndStop();
     testPadRowsIndependentAndLengths();
+    testFourBarDrumPadSwitchesOnBarBoundary();
     testPadRecordEventsAndInvalid();
     testSamplerPlaysAndEnds();
     testSamplerResamplesAndFallsBack();
