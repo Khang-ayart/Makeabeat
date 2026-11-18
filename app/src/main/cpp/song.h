@@ -41,7 +41,7 @@ enum DrumPiece : uint8_t {
 
 // Thông số một âm "one-shot" (kick, snare, hi-hat, percussion, 808...). Danh mục âm nằm ở Kotlin,
 // engine chỉ nhận thông số nên thêm âm mới không cần sửa C++.
-constexpr int kPatchInts = 19;  // số số nguyên mỗi patch trong mảng gửi sang (số thực x1000)
+constexpr int kPatchInts = 21;  // số số nguyên mỗi patch trong mảng gửi sang (số thực x1000)
 constexpr int kMaxKit = 32;
 struct Patch {
     float toneAmp = 0, fStart = 0, fEnd = 0;       // âm có cao độ: tần số đầu/cuối (Hz)
@@ -54,6 +54,8 @@ struct Patch {
     int chokeGroup = 0;                            // >0: voice cùng nhóm bị ngắt khi pad mới phát
     float gain = 1.0f, drive = 0;                  // drive>0: méo mềm (808 rè)
     float send = 0;                                // 0..1: lượng gửi vào reverb chung (snare nên có để dính vào bộ)
+    float root = 0;                                // > 0 (Hz): mẫu có cao độ gốc này; phát theo fStart->fEnd (808 mẫu thật, glide)
+    float vary = 0;                                // 0..1: mỗi cú đánh lệch nhẹ cao độ/độ to theo hạt giống (round robin giả)
     int sample = -1;                               // >= 0: phát mẫu âm thật trong ngân hàng (nếu đã nạp); không thì dùng tổng hợp ở trên
 };
 

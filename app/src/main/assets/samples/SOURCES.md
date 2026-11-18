@@ -36,3 +36,8 @@ Mọi mẫu lấy từ Stargate DAW Sample Pack (https://github.com/stargatedaw/
 - `perc.tom.wav` <- `fugue-state-audio/drums/toms/sdbkit-midtom.wav`
 - `perc.ride.wav` <- `karoryfer/cymbals/ride_UD_20.wav`
 - `perc.crash.wav` <- `fugue-state-audio/drums/cymbals/distkit-crash.wav`
+
+808 mẫu thật (hàng Bass của Looper, đổi cao độ trong engine; dựng bằng `tools/build_808.py`):
+- `bass.808long.wav` <- `fugue-state-audio/drums/kicks/sdbkit-sub-a.wav` (sub 55 Hz kéo dài)
+- `bass.808short.wav` <- `microlag/One-Shots/Drums/Kick2.wav` (~49 Hz)
+- `bass.808dist.wav` <- `microlag/One-Shots/Drums/Kick1.wav` (~51 Hz)

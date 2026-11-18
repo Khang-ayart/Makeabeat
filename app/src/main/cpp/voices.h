@@ -91,7 +91,8 @@ struct Voice {
     // Mẫu âm thật (pad Looper): con trỏ chỉ đọc, đọc với nội suy tuyến tính theo tỉ lệ sample rate.
     const int16_t* smpData = nullptr;  // mẫu lưu 16-bit (một nửa bộ nhớ so với float); đọc nhân 1/32768
     int smpLen = 0;
-    double smpPos = 0.0, smpInc = 1.0;
+    double smpPos = 0.0, smpInc = 1.0, smpBase = 1.0;
+    float smpRoot = 0.0f;  // > 0: mẫu có cao độ, đọc theo tần số (fStart->fEnd) / smpRoot
     // Synth (lead/arp và pad): 3 oscillator saw detune (PolyBLEP) + sub sine, lọc thấp 12 dB có envelope, ADSR.
     double synPh[3] = {}, synInc[3] = {};
     float synSub = 0.0f;                      // mức sub-oscillator (sine, thấp một quãng tám)
@@ -273,6 +274,11 @@ private:
             if (i0 + 1 >= smpLen) {
                 smpData = nullptr;  // hết mẫu
             } else {
+                if (smpRoot > 0.0f) {  // mẫu có cao độ: tần số trượt từ fStart về fEnd (808 glide)
+                    const float f = fEnd + (fStart - fEnd) * pitchEnv;
+                    pitchEnv *= pitchDecay;
+                    smpInc = smpBase * static_cast<double>(f / smpRoot);
+                }
                 const float fr = static_cast<float>(smpPos - i0);
                 float sv = (smpData[i0] + (smpData[i0 + 1] - smpData[i0]) * fr) * (1.0f / 32768.0f);
                 if (noiseLpK < 1.0f) {  // noiseLP của Patch áp cho cả mẫu thật
@@ -522,7 +528,15 @@ inline void Voice::startPatch(const Patch& p, const Sample* smp, int padIndex, i
         smpLen = static_cast<int>(smp->data.size());
         smpPos = 0.0;
         smpLp = 0.0f;
-        smpInc = static_cast<double>(smp->sampleRate) / sr;
+        smpInc = smpBase = static_cast<double>(smp->sampleRate) / sr;
+        smpRoot = p.root > 0.0f ? p.root : 0.0f;
+        if (p.vary > 0.0f) {  // lệch nhẹ theo hạt giống: cùng vị trí luôn giống nhau (vòng lặp khớp từng bit), khác vị trí thì khác
+            const uint32_t h = static_cast<uint32_t>((seed * 2654435761ULL) >> 13);
+            const float a = (static_cast<float>(h & 255u) / 255.0f - 0.5f) * p.vary;
+            const float b = (static_cast<float>((h >> 8) & 255u) / 255.0f - 0.5f) * p.vary;
+            if (smpRoot <= 0.0f) smpInc *= 1.0 + 0.03 * a;
+            gain *= 1.0f + 0.14f * b;
+        }
         toneAmp = noiseAmp = 0.0f;
         e1 = e2 = 0.0f;
         t2Amp = 0.0f;

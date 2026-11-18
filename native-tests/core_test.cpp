@@ -1201,6 +1201,43 @@ static void testKeyboardNotesInClip() {
     if (song) CHECK(song->tracks[0].pads[20].hits.size() == 1, "invalid hits kept: %zu", song->tracks[0].pads[20].hits.size());
 }
 
+static void testPitchedSampleAndVary() {
+    begin("Mẫu có cao độ: root + tần số đích đổi tốc độ phát đúng tỉ lệ; vary lệch nhẹ nhưng lặp lại giống hệt từng bit");
+    auto run = [&](float root, float fStart, float fEnd, float vary, int frames) {
+        auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        const auto smp = rampSample(4800);
+        core->loadSample(0, smp.data(), 4800, 48000);
+        auto patch = samplePatch(0, 1.0f);
+        patch[1] = static_cast<int32_t>(fStart * 1000);
+        patch[2] = static_cast<int32_t>(fEnd * 1000);
+        patch[19] = static_cast<int32_t>(root * 1000);
+        patch[20] = static_cast<int32_t>(vary * 1000);
+        publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Looper, {}, Kit{patch})}));
+        renderAll(*core, 1, 64, 64);
+        core->noteOn(static_cast<int>(Inst::Looper), 0, 0, 127);
+        auto out = renderAll(*core, 1, frames, 480);
+        return std::make_pair(out, core->activeVoiceCount());
+    };
+    // Gốc 100 Hz, phát 200 Hz: nhanh gấp đôi, hết sau ~2400 khung hình; phát 50 Hz: chậm một nửa, còn đang chạy ở 6000.
+    CHECK(run(100, 200, 200, 0, 2000).second == 1, "2x sample ended too early");
+    CHECK(run(100, 200, 200, 0, 2800).second == 0, "2x sample did not end");
+    CHECK(run(100, 50, 50, 0, 6000).second == 1, "0.5x sample ended too early");
+    CHECK(run(100, 50, 50, 0, 9800).second == 0, "0.5x sample did not end");
+    // Glide: bắt đầu 200 Hz trượt về 100 Hz (tau 30 ms) thì hết sớm hơn phát 1x cố định (4800 khung) nhưng muộn hơn 2x.
+    CHECK(run(100, 100, 100, 0, 4000).second == 1 && run(100, 100, 100, 0, 5200).second == 0, "1x length off");
+    CHECK(run(100, 200, 100, 0, 3000).second == 1 && run(100, 200, 100, 0, 3800).second == 0, "glide length off");
+    // vary: lặp lại cùng kết quả; khác bản không vary.
+    const auto a = run(0, 100, 100, 1.0f, 3000).first, b = run(0, 100, 100, 1.0f, 3000).first;
+    const auto c = run(0, 100, 100, 0.0f, 3000).first;
+    CHECK(a == b, "vary not deterministic");
+    CHECK(a != c, "vary changed nothing");
+    // Mẫu có cao độ: cao độ giữ nguyên, chỉ độ to lệch tối đa ~7%.
+    const auto pv = run(100, 100, 100, 1.0f, 3000).first, p0 = run(100, 100, 100, 0.0f, 3000).first;
+    double ea = 0, ec = 0;
+    for (size_t i = 0; i < pv.size(); ++i) { ea += pv[i] * pv[i]; ec += p0[i] * p0[i]; }
+    CHECK(ea > 0.8 * ec && ea < 1.25 * ec, "pitched vary gain off (%f vs %f)", ea, ec);
+}
+
 static void testLooperMix() {
     begin("Bản trộn Looper: kick đạp sidechain lên bass, bass bị cắt rumble, limiter giữ đỉnh dưới trần, tắt fx thì không đụng");
     auto setup = [&](bool fx) {
@@ -1285,6 +1322,7 @@ int main() {
     testKeyboardNotesInClip();
     testSynthRows();
     testLooperMix();
+    testPitchedSampleAndVary();
 
     if (g_failures == 0) {
         std::printf("\nALL %d TESTS PASSED\n", g_tests);

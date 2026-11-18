@@ -51,6 +51,8 @@ data class Patch(
     val gain: Float = 1f,
     val drive: Float = 0f,
     val send: Float = 0f,           // 0..1: gửi vào reverb chung
+    val root: Float = 0f,           // > 0 (Hz): mẫu có cao độ gốc, phát theo fStart->fEnd
+    val vary: Float = 0f,           // 0..1: lệch nhẹ cao độ/độ to mỗi cú đánh
     val sample: Int = -1,           // >= 0: ô mẫu âm thật trong engine (nếu nạp được); không thì dùng phần tổng hợp
 ) {
     /** Thứ tự phải khớp decodeSong: số thực nhân 1000; bursts và chokeGroup là số nguyên thô. */
@@ -59,7 +61,7 @@ data class Patch(
         out.add(q(toneAmp)); out.add(q(fStart)); out.add(q(fEnd)); out.add(q(pitchTauMs)); out.add(q(toneTauMs))
         out.add(q(noiseAmp)); out.add(q(noiseTauMs)); out.add(q(noiseHP)); out.add(q(noiseLP))
         out.add(bursts); out.add(q(burstGapMs)); out.add(q(tailTauMs)); out.add(q(tone2Ratio)); out.add(q(tone2Amp))
-        out.add(chokeGroup); out.add(q(gain)); out.add(q(drive)); out.add(sample); out.add(q(send))
+        out.add(chokeGroup); out.add(q(gain)); out.add(q(drive)); out.add(sample); out.add(q(send)); out.add(q(root)); out.add(q(vary))
     }
 
     fun transposed(semitones: Int): Patch {
@@ -69,7 +71,7 @@ data class Patch(
     }
 
     companion object {
-        const val INTS = 19  // khớp kPatchInts
+        const val INTS = 21  // khớp kPatchInts
         val SILENT = Patch()
     }
 }
@@ -177,11 +179,20 @@ object Catalog {
      * Thông số tổng hợp ở trên vẫn giữ làm dự phòng khi mẫu chưa nạp được. Ô mẫu = vị trí trong [sampleIds].
      */
     private val allSounds: List<Sound> = kicks + snares + hats + percs + basses
-    val sampleIds: List<String> = allSounds.filter { it.cat != SoundCat.BASS }.map { it.id }
-    private val sampleGain = mapOf(SoundCat.KICK to 1f, SoundCat.SNARE to 1f, SoundCat.HAT to 1f, SoundCat.PERC to 1f) // độ to đã cân sẵn trong mẫu
+    /** 808 mẫu thật: tần số gốc (Hz) đo từ mẫu; engine đổi cao độ và trượt nốt theo fStart -> fEnd của patch. */
+    private val sampledBassRoot = mapOf("bass.808long" to 55.2f, "bass.808short" to 49.1f, "bass.808dist" to 51.0f)
+    val sampleIds: List<String> = allSounds.filter { it.cat != SoundCat.BASS || it.id in sampledBassRoot }.map { it.id }
+    private val sampleGain = mapOf(SoundCat.KICK to 1f, SoundCat.SNARE to 1f, SoundCat.HAT to 1f, SoundCat.PERC to 1f, SoundCat.BASS to 0.9f) // độ to đã cân sẵn trong mẫu
+    // Lệch nhẹ mỗi cú đánh (round robin giả): hi-hat/perc/snare nhiều hơn, kick ít, bass giữ nguyên cao độ.
+    private val sampleVary = mapOf(SoundCat.KICK to 0.5f, SoundCat.SNARE to 0.8f, SoundCat.HAT to 1f, SoundCat.PERC to 1f, SoundCat.BASS to 0f)
     val sounds: List<Sound> = allSounds.map { snd ->
         val slot = sampleIds.indexOf(snd.id)
-        if (slot < 0) snd else Sound(snd.id, snd.label, snd.cat, snd.patch.copy(sample = slot, gain = sampleGain.getValue(snd.cat), noiseLP = 0f))
+        if (slot < 0) snd else {
+            val root = sampledBassRoot[snd.id] ?: 0f
+            var p = snd.patch.copy(sample = slot, gain = sampleGain.getValue(snd.cat), noiseLP = 0f, root = root, vary = sampleVary.getValue(snd.cat))
+            if (root > 0f) p = p.copy(fStart = E1, fEnd = E1)  // không glide sẵn: mẫu đã có đầu đánh riêng
+            Sound(snd.id, snd.label, snd.cat, p)
+        }
     }
     private val byId: Map<String, Sound> = sounds.associateBy { it.id }
 

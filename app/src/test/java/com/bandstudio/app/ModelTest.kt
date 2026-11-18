@@ -402,7 +402,7 @@ class ModelTest {
     fun everyNonBassSoundHasAValidSampleFile() {
         assertEquals(Catalog.sampleIds.size, Catalog.sampleIds.toSet().size)
         for (snd in Catalog.sounds) {
-            if (snd.cat == SoundCat.BASS) {
+            if (snd.cat == SoundCat.BASS && snd.id !in setOf("bass.808long", "bass.808short", "bass.808dist")) {
                 assertEquals("${snd.id}: bass dùng tổng hợp", -1, snd.patch.sample)
                 continue
             }
@@ -421,12 +421,28 @@ class ModelTest {
     }
 
     @Test
+    fun sampled808HasRootAndFixedGlide() {
+        for (id in listOf("bass.808long", "bass.808short", "bass.808dist")) {
+            val p = Catalog.sound(id)!!.patch
+            assertTrue("$id: root", p.root in 40f..70f)
+            assertTrue("$id: ô mẫu", p.sample >= 0)
+            assertEquals(p.fStart, p.fEnd, 0f)
+            val up = Catalog.patchFor(PadSpec(id, 7))
+            assertEquals(p.root > 0f, up.root > 0f)
+            assertEquals(p.fEnd * Math.pow(2.0, 7 / 12.0).toFloat(), up.fEnd, 0.01f)
+        }
+        assertTrue(Catalog.sampleIds.size < 100)  // ô mẫu nhạc cụ bắt đầu ở 100
+    }
+
+    @Test
     fun sampleSlotAndSendAreEncodedLast() {
         val out = ArrayList<Int>()
         Patch(sample = 5, send = 0.4f, bursts = 2, chokeGroup = 1).encodeTo(out)
         assertEquals(Patch.INTS, out.size)
         assertEquals(5, out[17])  // ô mẫu
         assertEquals(400, out[18])  // send x1000
+        assertEquals(0, out[19])  // root
+        assertEquals(0, out[20])  // vary
         assertEquals(2, out[9])   // bursts (số nguyên thô)
         assertEquals(1, out[14])  // chokeGroup (số nguyên thô)
     }

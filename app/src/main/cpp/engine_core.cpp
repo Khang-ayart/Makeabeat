@@ -67,6 +67,8 @@ Song* decodeSong(const int32_t* d, int n) {
             p.drive = f(d[i + 16]);
             p.sample = d[i + 17];
             p.send = std::clamp(static_cast<float>(d[i + 18]) / 1000.0f, 0.0f, 1.0f);
+            p.root = std::clamp(f(d[i + 19]), 0.0f, 2000.0f);
+            p.vary = std::clamp(f(d[i + 20]), 0.0f, 1.0f);
             td.kit.push_back(p);
         }
         const int padCount = d[i++];
