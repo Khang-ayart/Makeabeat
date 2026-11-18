@@ -79,7 +79,14 @@ struct PadPattern {
 };
 
 // Mẫu âm thật (mono, float [-1, 1]) nạp một lần khi khởi động, sau đó chỉ đọc.
-constexpr int kMaxSamples = 64;
+constexpr int kMaxSamples = 256;
+// Vùng phát của nhạc cụ có cao độ (piano, bass, guitar): mẫu gốc ở nốt root, dùng cho nốt [lo, hi] và velocity [velLo, velHi].
+constexpr int kMaxZones = 96;
+struct Zone {
+    int sample = -1;
+    int root = 60, lo = 0, hi = 127, velLo = 1, velHi = 127;
+    float gain = 1.0f;
+};
 struct Sample {
     std::vector<float> data;
     int sampleRate = 44100;
