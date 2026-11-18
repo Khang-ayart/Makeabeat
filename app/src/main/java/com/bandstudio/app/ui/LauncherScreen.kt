@@ -47,6 +47,7 @@ import com.bandstudio.app.Screen
 import com.bandstudio.app.model.BAR_TICKS
 import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.PADS_PER_ROW
+import com.bandstudio.app.model.PENDING_SHIFT
 import com.bandstudio.app.model.Patterns
 import com.bandstudio.app.model.SoundCat
 
@@ -88,7 +89,11 @@ fun LauncherScreen(vm: StudioViewModel) {
                 Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (col in 0 until PADS_PER_ROW) {
                         val pad = row * PADS_PER_ROW + col
-                        val label = if (cat == SoundCat.KEYS && genre != null) Patterns.progressionLabel(track.keyRoot, genre.minor, pad) else padTitle(track, pad, cat, col)
+                        val label = when {
+                            (cat == SoundCat.KEYS || cat == SoundCat.ATMOS) && genre != null -> Patterns.progressionLabel(track.keyRoot, genre.minor, pad)
+                            cat == SoundCat.LEAD -> leadName(col)
+                            else -> padTitle(track, pad, cat, col)
+                        }
                         LoopPad(vm, pad, label, genre?.family ?: "", Color(cat.color), Modifier.weight(1f).fillMaxSize())
                     }
                 }
@@ -114,6 +119,8 @@ private fun KeyPicker(vm: StudioViewModel, trackId: Int, key: Int) {
     }
 }
 
+private fun leadName(col: Int) = arrayOf("Arp", "Pluck", "Hook", "Stab")[col]
+
 private fun padTitle(track: com.bandstudio.app.model.Track, pad: Int, cat: SoundCat, col: Int): String {
     val spec = track.kit.getOrNull(pad) ?: return cat.label
     val snd = Catalog.sound(spec.soundId)
@@ -124,14 +131,14 @@ private fun padTitle(track: com.bandstudio.app.model.Track, pad: Int, cat: Sound
 private fun LoopPad(vm: StudioViewModel, pad: Int, title: String, family: String, color: Color, modifier: Modifier) {
     val mask = vm.padMask
     val active = (mask shr pad) and 1L == 1L
-    val pending = (mask shr (24 + pad)) and 1L == 1L
+    val pending = (mask shr (PENDING_SHIFT + pad)) and 1L == 1L
     val queuedOn = pending && !active
     val queuedOff = pending && active
     val blink by rememberInfiniteTransition(label = "queued").animateFloat(
         initialValue = 0.25f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(280), RepeatMode.Reverse), label = "blink",
     )
-    val pattern = (if (Patterns.isKeyPad(pad)) Patterns.keyRhythm(family, pad) else Patterns.pattern(family, pad)) ?: ""
+    val pattern = (if (Patterns.isKeyPad(pad)) Patterns.displayRhythm(family, pad) else Patterns.pattern(family, pad)) ?: ""
     val shape = RoundedCornerShape(10.dp)
     val fill = when {
         active && !queuedOff -> color

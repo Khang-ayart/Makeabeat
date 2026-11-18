@@ -83,11 +83,21 @@ object Patterns {
     /** Một cú đánh: tick trong chu kỳ của pad, velocity, âm trong kit (< 128) hoặc nốt keyboard (128 + MIDI), độ dài. */
     data class Hit(val tick: Int, val vel: Int, val kitIdx: Int, val dur: Int)
 
-    const val KEY_NOTE_BASE = 128
-    private val KEYS_FIRST_PAD = KIT_COUNT  // pad 20..23 là hàng Keyboard
+    const val KEY_NOTE_BASE = 128     // Keyboard (piano)
+    const val LEAD_NOTE_BASE = 256    // Synth lead / arp
+    const val ATMOS_NOTE_BASE = 384   // Synth pad / atmos
+    private val KEYS_FIRST_PAD = KIT_COUNT  // pad 20..31: các hàng giai điệu (Keyboard, Synth, Pad)
     const val KEYS_BARS = 4                 // vòng hợp âm dài 4 ô nhịp
 
+    /** Pad thuộc hàng giai điệu (không có âm trong kit, nốt nằm ngay trong nhịp của pad). */
     fun isKeyPad(pad: Int) = pad >= KEYS_FIRST_PAD
+
+    /** Mã nốt cơ sở của hàng giai điệu chứa [pad]: mã nốt = base + MIDI. */
+    fun noteBase(pad: Int): Int = when (SoundCat.entries.getOrNull(pad / PADS_PER_ROW)) {
+        SoundCat.LEAD -> LEAD_NOTE_BASE
+        SoundCat.ATMOS -> ATMOS_NOTE_BASE
+        else -> KEY_NOTE_BASE
+    }
 
     /** Độ dài chu kỳ (tick) của pad: nhịp 1 ô, vòng hợp âm 4 ô. */
     fun lenTicks(pad: Int) = if (isKeyPad(pad)) KEYS_BARS * BAR_TICKS else LEN_TICKS
@@ -194,7 +204,86 @@ object Patterns {
 
     /** Tất cả cú đánh của một pad (trống/bass/hợp âm) để gửi engine. */
     fun padHits(genre: Genre, key: Int, pad: Int): List<Hit> =
-        if (isKeyPad(pad)) keyHits(genre.family, pad, key, genre.minor) else swung(hits(genre.family, pad), swingOf(genre.id))
+        if (isKeyPad(pad)) melodicHits(genre.family, pad, key, genre.minor) else swung(hits(genre.family, pad), swingOf(genre.id))
+
+    /** Hàng giai điệu: Keyboard (hợp âm), Synth lead (arp / pluck / hook / stab), Synth pad (hợp âm nền kéo dài). */
+    fun melodicHits(family: String, pad: Int, key: Int, minor: Boolean): List<Hit> =
+        when (SoundCat.entries.getOrNull(pad / PADS_PER_ROW)) {
+            SoundCat.KEYS -> keyHits(family, pad, key, minor)
+            SoundCat.LEAD -> leadHits(family, pad, key, minor)
+            SoundCat.ATMOS -> atmosHits(pad, key, minor)
+            else -> emptyList()
+        }
+
+    private val leadDense = setOf("edm", "pop", "trap", "latin")
+
+    /** Nhịp 16 bước dùng để vẽ vạch nhỏ trên pad (chỉ để hiển thị). */
+    fun displayRhythm(family: String, pad: Int): String? = when (SoundCat.entries.getOrNull(pad / PADS_PER_ROW)) {
+        SoundCat.KEYS -> keyRhythm(family, pad)
+        SoundCat.LEAD -> when (pad % PADS_PER_ROW) {
+            0 -> if (family in leadDense) "xxxxxxxxxxxxxxxx" else "x.x.x.x.x.x.x.x."
+            1 -> "..x...x...x...x."
+            2 -> "x...x.x.x...x..."
+            else -> "x..x..x.x..x..x."
+        }
+        SoundCat.ATMOS -> "x..............."
+        else -> null
+    }
+
+    private val leadMotifs = listOf(  // (bước, chỉ số nốt hợp âm, dịch quãng tám, độ dài bước)
+        listOf(intArrayOf(0, 2, 0, 3), intArrayOf(4, 1, 0, 2), intArrayOf(6, 0, 0, 2), intArrayOf(8, 2, 0, 3), intArrayOf(12, 1, 0, 2)),
+        listOf(intArrayOf(0, 0, 0, 3), intArrayOf(4, 1, 0, 2), intArrayOf(6, 2, 0, 2), intArrayOf(10, 1, 0, 2), intArrayOf(12, 2, 12, 4)),
+    )
+
+    /**
+     * Synth lead: mọi nốt đều là nốt của hợp âm đang chơi (arp, pluck, hook, stab) nên không thể nghe sai tông.
+     * Cột 0 arp liên tục, cột 1 pluck lệch phách, cột 2 hook 2 ô nhịp lặp lại, cột 3 stab ngắt quãng.
+     */
+    fun leadHits(family: String, pad: Int, key: Int, minor: Boolean): List<Hit> {
+        val col = pad % PADS_PER_ROW
+        val prog = progression(minor, pad)
+        val dense = family in leadDense
+        val out = ArrayList<Hit>()
+        for (bar in 0 until KEYS_BARS) {
+            val tones = chordNotes(key, prog[bar]).map { it + 12 }
+            val base = bar * BAR_TICKS
+            fun add(step: Int, midi: Int, vel: Int, dur: Int) =
+                out.add(Hit(base + step * STEP_TICKS, vel, LEAD_NOTE_BASE + midi, dur))
+            when (col) {
+                0 -> {
+                    val gap = if (dense) 1 else 2
+                    val seq = intArrayOf(0, 1, 2, 1)
+                    var i = 0
+                    for (step in 0 until STEPS step gap) {
+                        add(step, tones[seq[i % seq.size]], if (i % 4 == 0) 92 else 72, gap * STEP_TICKS - 30)
+                        i++
+                    }
+                }
+                1 -> for ((i, step) in intArrayOf(2, 6, 10, 14).withIndex()) add(step, tones[intArrayOf(2, 1, 2, 0)[i]], 84, 360)
+                2 -> for (m in leadMotifs[bar % 2]) add(m[0], tones[m[1]] + m[2], 88, m[3] * STEP_TICKS - 40)
+                else -> for (step in intArrayOf(0, 3, 6, 8, 11, 14)) for (t in tones) add(step, t, 78, 170)
+            }
+        }
+        return out
+    }
+
+    /** Synth pad: hợp âm nền kéo dài hết ô nhịp, bốn cách xếp nốt (đóng, mở, add9, đảo cao). */
+    fun atmosHits(pad: Int, key: Int, minor: Boolean): List<Hit> {
+        val col = pad % PADS_PER_ROW
+        val prog = progression(minor, pad)
+        val out = ArrayList<Hit>()
+        for (bar in 0 until KEYS_BARS) {
+            val n = chordNotes(key, prog[bar])
+            val voicing = when (col) {
+                0 -> n
+                1 -> listOf(n[0], n[0] + 7, n[1] + 12)
+                2 -> listOf(n[0], n[1], n[2], n[0] + 14)
+                else -> listOf(n[1] + 12, n[2] + 12, n[0] + 24)
+            }
+            for (note in voicing) out.add(Hit(bar * BAR_TICKS, 72, ATMOS_NOTE_BASE + note, BAR_TICKS - 80))
+        }
+        return out
+    }
 
     /** Độ swing (0..0,5) theo thể loại: phần của một bước 1/16 mà nốt lẻ bị trễ. 0 = thẳng hàng. */
     fun swingOf(genreId: String): Float = when (genreId) {

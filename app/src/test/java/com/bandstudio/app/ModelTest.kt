@@ -97,7 +97,7 @@ class ModelTest {
         for (g in Catalog.genres) {
             val kit = g.kit()
             assertEquals("${g.id}: số âm trong kit", com.bandstudio.app.model.KIT_COUNT, kit.size)
-            SoundCat.entries.filter { it != SoundCat.KEYS }.forEachIndexed { row, cat ->
+            SoundCat.entries.filter { it.hasKit }.forEachIndexed { row, cat ->
                 val rowPads = kit.subList(row * PADS_PER_ROW, (row + 1) * PADS_PER_ROW)
                 for (pad in rowPads) {
                     val snd = Catalog.sound(pad.soundId)
@@ -212,7 +212,7 @@ class ModelTest {
 
     @Test
     fun padsInARowDifferFromEachOther() {
-        for (g in Catalog.genres) for (row in 0 until SoundCat.entries.size - 1) {
+        for (g in Catalog.genres) for (row in 0 until com.bandstudio.app.model.KIT_ROWS) {
             val set = (0 until PADS_PER_ROW).map { Patterns.pattern(g.family, row * PADS_PER_ROW + it) }.toSet()
             assertEquals("${g.family}/$row: 4 mẫu phải khác nhau", PADS_PER_ROW, set.size)
         }
@@ -236,6 +236,31 @@ class ModelTest {
             val root = Math.floorMod(key + first.root, 12)
             assertTrue("${g.id}/$key: thiếu chủ âm", root in pcs || hits.first().kitIdx - 128 == 48 + root)
         }
+    }
+
+    @Test
+    fun synthRowsOnlyPlayChordTonesInKey() {
+        val leadRow = SoundCat.LEAD.ordinal * PADS_PER_ROW
+        val atmosRow = SoundCat.ATMOS.ordinal * PADS_PER_ROW
+        for (g in Catalog.genres) for (key in 0 until 12) for (col in 0 until PADS_PER_ROW) {
+            for ((pad, base) in listOf(leadRow + col to Patterns.LEAD_NOTE_BASE, atmosRow + col to Patterns.ATMOS_NOTE_BASE)) {
+                assertEquals(base, Patterns.noteBase(pad))
+                val hits = Patterns.padHits(g, key, pad)
+                assertTrue("${g.id}/$key/$pad rỗng", hits.isNotEmpty())
+                val prog = Patterns.progression(g.minor, pad)
+                for (h in hits) {
+                    assertTrue(h.tick in 0 until Patterns.lenTicks(pad) && h.dur > 0 && h.vel in 1..127)
+                    assertTrue("mã nốt ${h.kitIdx}", h.kitIdx in base + 40..base + 100)
+                    val bar = h.tick / com.bandstudio.app.model.BAR_TICKS
+                    val chordPcs = Patterns.chordNotes(key, prog[bar]).map { it % 12 }.toSet()
+                    val pc = (h.kitIdx - base) % 12
+                    if (base == Patterns.LEAD_NOTE_BASE) assertTrue("${g.id}/$key/$pad: nốt lạ $pc ngoài $chordPcs", pc in chordPcs)
+                    else assertTrue("pad nốt lạ $pc", pc in chordPcs || pc == (chordPcs.first() + 2) % 12) // add9 cho phép thêm quãng 9
+                }
+            }
+        }
+        assertEquals(32, com.bandstudio.app.model.PAD_COUNT)
+        assertEquals(20, com.bandstudio.app.model.KIT_COUNT)
     }
 
     @Test

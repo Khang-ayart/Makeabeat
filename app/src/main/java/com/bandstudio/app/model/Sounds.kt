@@ -11,12 +11,22 @@ enum class SoundCat(val label: String, val color: Long) {
     PERC("Percussion", 0xFF5B8CFF),
     BASS("808 / Bass", 0xFF9B6BFF),
     KEYS("Keyboard", 0xFFE0568F),  // vòng hợp âm: không có trong kit, nốt nằm ngay trong nhịp của pad
+    LEAD("Synth", 0xFF8A6BFF),     // synth lead / arp: nốt của hợp âm, phát bằng giọng synth trong engine
+    ATMOS("Pad", 0xFF3FC1D9);      // synth pad / atmos: hợp âm nền kéo dài
+
+    /** Hàng có âm riêng trong kit (kick..bass). Hàng giai điệu (Keyboard, Synth, Pad) phát nốt trực tiếp. */
+    val hasKit: Boolean get() = ordinal < KIT_ROWS
 }
+
+/** Số hàng có kit (Kick, Snare, Hi-hat, Percussion, Bass); các hàng sau là hàng giai điệu. */
+const val KIT_ROWS = 5
 
 /** Mỗi hàng có 4 pad (4 lựa chọn). Pad số i của track Looper = hàng i / 4, cột i % 4. */
 const val PADS_PER_ROW = 4
-val PAD_COUNT = SoundCat.entries.size * PADS_PER_ROW                 // 24 pad (6 hàng x 4)
-val KIT_COUNT = (SoundCat.entries.size - 1) * PADS_PER_ROW           // 20 âm trong kit (hàng Keyboard không cần âm riêng)
+val PAD_COUNT = SoundCat.entries.size * PADS_PER_ROW                 // 32 pad (8 hàng x 4)
+/** Mask pad từ engine: bit 0..31 = pad đang chạy, bit 32..63 = pad đang chờ đổi trạng thái ở đầu ô nhịp kế. */
+const val PENDING_SHIFT = 32
+val KIT_COUNT = KIT_ROWS * PADS_PER_ROW                              // 20 âm trong kit (hàng giai điệu không cần âm riêng)
 
 /**
  * Thông số một âm one-shot, khớp struct Patch trong song.h. Engine ghép: tone (sin trượt cao độ)
@@ -85,7 +95,7 @@ class Genre(
      */
     fun kit(keyRoot: Int = DEFAULT_KEY): List<PadSpec> {
         val root = Math.floorMod(keyRoot - 4, 12)  // nửa cung trên E1 (E = nốt số 4 của C = 0)
-        return SoundCat.entries.filter { it != SoundCat.KEYS }.flatMap { cat ->
+        return SoundCat.entries.filter { it.hasKit }.flatMap { cat ->
             if (cat == SoundCat.BASS) bassIntervals.map { PadSpec(bassSound, root + it) }
             else picks.getValue(cat).map { PadSpec(it) }
         }

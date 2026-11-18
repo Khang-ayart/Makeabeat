@@ -304,6 +304,8 @@ private fun shortCat(c: SoundCat) = when (c) {
     SoundCat.PERC -> "Perc"
     SoundCat.BASS -> "Bass"
     SoundCat.KEYS -> "Keys"
+    SoundCat.LEAD -> "Synth"
+    SoundCat.ATMOS -> "Pad"
 }
 
 private fun looperRows(track: Track): List<PadRow> = List(KIT_COUNT) { i ->
@@ -416,7 +418,7 @@ private fun DrumPads(vm: StudioViewModel, color: Color) {
 @Composable
 private fun LooperPads(vm: StudioViewModel, track: Track) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        SoundCat.entries.filter { it != SoundCat.KEYS }.forEachIndexed { row, cat ->
+        SoundCat.entries.filter { it.hasKit }.forEachIndexed { row, cat ->
             val color = Color(cat.color)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(

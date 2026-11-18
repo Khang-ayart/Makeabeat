@@ -20,6 +20,7 @@ import com.bandstudio.app.model.PADS_PER_ROW
 import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.DEFAULT_KEY
 import com.bandstudio.app.model.PAD_COUNT
+import com.bandstudio.app.model.PENDING_SHIFT
 import com.bandstudio.app.model.Patterns
 import com.bandstudio.app.model.Randomizer
 import com.bandstudio.app.model.SoundCat
@@ -334,7 +335,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val row = pad / PADS_PER_ROW
         val m = padMask
         val active = (m shr pad) and 1L == 1L
-        val queuedOff = active && (m shr (24 + pad)) and 1L == 1L
+        val queuedOff = active && (m shr (PENDING_SHIFT + pad)) and 1L == 1L
         when {
             active && !queuedOff -> AudioEngine.padLaunch(idx, row, -1)
             else -> AudioEngine.padLaunch(idx, row, pad) // chưa chạy, hoặc đang chờ tắt -> huỷ lệnh tắt
@@ -361,8 +362,10 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         if (down) {
             if (Patterns.isKeyPad(pad)) {
                 val g = Catalog.genre(t.genreId) ?: return
-                val notes = Patterns.chordNotes(t.keyRoot, Patterns.progression(g.minor, pad)[0])
-                for (n in notes) { AudioEngine.noteOn(Instrument.LOOPER.id, idx, Patterns.KEY_NOTE_BASE + n, 90); auditioned.add(n) }
+                // Nghe thử hợp âm đầu của vòng, bằng đúng giọng của hàng (piano / synth lead / synth pad).
+                val lift = if (SoundCat.entries[pad / PADS_PER_ROW] == SoundCat.LEAD) 12 else 0
+                val notes = Patterns.chordNotes(t.keyRoot, Patterns.progression(g.minor, pad)[0]).map { it + lift }
+                for (n in notes) { AudioEngine.noteOn(Instrument.LOOPER.id, idx, Patterns.noteBase(pad) + n, 90); auditioned.add(n) }
             } else {
                 AudioEngine.noteOn(Instrument.LOOPER.id, idx, pad, 110)
             }
