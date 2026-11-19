@@ -43,6 +43,12 @@ object AudioEngine {
     external fun loadVocal(slot: Int, data: FloatArray, sampleRate: Int): Boolean
     external fun clearVocal(slot: Int): Boolean
     external fun setVocalFx(track: Int, reverb: Float, comp: Float, bright: Float)
+    /** Lọc ồn tại chỗ; [noiseCount] mẫu đầu là đoạn im lặng để học nhiễu (0 = tự tìm). Chạy trên luồng nền. */
+    external fun denoiseVocal(data: FloatArray, sampleRate: Int, strength: Float, noiseCount: Int)
+    /** Sửa cao độ về thang của tông, tại chỗ. Chạy trên luồng nền. */
+    external fun autoTuneVocal(data: FloatArray, sampleRate: Int, keyRoot: Int, minor: Boolean, chromatic: Boolean, strength: Float, speed: Float)
+    /** Đoán tông: {chủ âm, thứ(1)/trưởng(0), độ tin cậy x1000, ms có giọng}. */
+    external fun detectKey(data: FloatArray, sampleRate: Int): IntArray
     external fun loadSample(id: Int, data: FloatArray, sampleRate: Int): Boolean
     external fun addZone(inst: Int, sample: Int, root: Int, lo: Int, hi: Int, velLo: Int, velHi: Int, gain: Float): Boolean
 

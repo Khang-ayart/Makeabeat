@@ -297,7 +297,7 @@ void EngineCore::publishSong(Song* song) {
 bool EngineCore::play(int fromTick) noexcept {
     Command c;
     c.type = Command::Type::Play;
-    c.a = std::max(0, fromTick);
+    c.a = std::max(-2 * kBeatsPerBar * kPpq, fromTick);  // tick âm = đếm nhịp trước ô nhịp 1 (tối đa 2 ô)
     return commands_.push(c);
 }
 

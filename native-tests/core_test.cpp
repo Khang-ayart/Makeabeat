@@ -1203,6 +1203,25 @@ static void testVocalTrack() {
     CHECK(c2->clearVocal(300), "clearVocal failed");
 }
 
+static void testCountInBeforeBarOne() {
+    begin("Đếm nhịp: play(-3840) phát 4 tiếng click trước ô 1 rồi giọng hát vào đúng giây 0 của bài");
+    const int sr = 44100;
+    std::vector<float> sine(static_cast<size_t>(sr * 2));
+    for (size_t i = 0; i < sine.size(); ++i) sine[i] = 0.5f * std::sin(2.0f * 3.14159265f * 1000.0f * static_cast<float>(i) / sr);
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, true));
+    CHECK(core->loadVocal(300, sine.data(), static_cast<int>(sine.size()), sr), "loadVocal failed");
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Vocal, {{0, 2000, 300, 100}})}));
+    core->setVocalFx(0, 0.0f, 0.0f, 0.0f);
+    core->play(-3840);
+    const auto out = renderAll(*core, 1, 48000 * 4, 480);   // 1 ô nhịp 120 BPM = 2 s
+    const auto on = findOnsets(out);
+    // 4 click ở 0, 0,5, 1,0, 1,5 s rồi giọng ở 2,0 s (các onset gần nhau gộp theo findOnsets).
+    CHECK(on.size() >= 5, "onsets %zu", on.size());
+    for (int k = 0; k < 4 && static_cast<size_t>(k) < on.size(); ++k)
+        CHECK(std::llabs(on[static_cast<size_t>(k)] - k * 24000) <= 2, "click %d at %lld", k, static_cast<long long>(on[static_cast<size_t>(k)]));
+    CHECK(peak(out, 96000 + 3000, 10000) > 0.15f, "vocal missing after count-in");
+}
+
 static void testSynthStyles() {
     begin("Giọng synth theo thể loại: sáng > mặc định > mềm tối về năng lượng cao tần; mỗi giọng lặp giống hệt từng bit, không vượt biên");
     auto run = [&](int style) {
@@ -1400,6 +1419,7 @@ int main() {
     testSynthRows();
     testSynthStyles();
     testVocalTrack();
+    testCountInBeforeBarOne();
     testLooperMix();
     testPitchedSampleAndVary();
 

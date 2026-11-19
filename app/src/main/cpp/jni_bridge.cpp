@@ -2,7 +2,11 @@
 
 #include <memory>
 
+#include <vector>
+
 #include "audio_engine.h"
+#include "noise_reducer.h"
+#include "vocal_dsp.h"
 
 namespace {
 // Chỉ được chạm vào từ luồng chính (UI) của ứng dụng.
@@ -168,4 +172,50 @@ JNIEXPORT jint JNICALL JNI_FN(activeVoices)(JNIEnv*, jobject) {
     return gEngine ? gEngine->core().activeVoiceCount() : 0;
 }
 
+
+// ---- Xử lý bản thu giọng (chạy trên luồng nền, không liên quan luồng âm thanh) ----
+
+// Lọc ồn tại chỗ. noiseCount mẫu đầu là đoạn "im lặng" để học phổ nhiễu (0 = tự tìm khung yên tĩnh nhất).
+JNIEXPORT void JNICALL JNI_FN(denoiseVocal)(JNIEnv* env, jobject, jfloatArray data, jint sampleRate, jfloat strength, jint noiseCount) {
+    if (!data) return;
+    const jsize n = env->GetArrayLength(data);
+    std::vector<float> x(static_cast<size_t>(n));
+    env->GetFloatArrayRegion(data, 0, n, x.data());
+    std::vector<float> noise;
+    if (noiseCount > 1024 && noiseCount < n) noise.assign(x.begin(), x.begin() + noiseCount);
+    band::DenoiseParams p;
+    p.strength = strength;
+    band::denoise(x, sampleRate, p, noise.empty() ? nullptr : noise.data(), static_cast<int>(noise.size()));
+    env->SetFloatArrayRegion(data, 0, n, x.data());
+}
+
+// Auto-tune tại chỗ (xem band::autoTune).
+JNIEXPORT void JNICALL JNI_FN(autoTuneVocal)(JNIEnv* env, jobject, jfloatArray data, jint sampleRate, jint keyRoot, jboolean minor,
+                                             jboolean chromatic, jfloat strength, jfloat speed) {
+    if (!data) return;
+    const jsize n = env->GetArrayLength(data);
+    std::vector<float> x(static_cast<size_t>(n));
+    env->GetFloatArrayRegion(data, 0, n, x.data());
+    band::AutoTuneParams p;
+    p.keyRoot = ((keyRoot % 12) + 12) % 12;
+    p.minor = minor == JNI_TRUE;
+    p.chromatic = chromatic == JNI_TRUE;
+    p.strength = strength;
+    p.speed = speed;
+    band::autoTune(x, sampleRate, p);
+    env->SetFloatArrayRegion(data, 0, n, x.data());
+}
+
+// Đoán tông: {chủ âm 0..11, thứ (1) hay trưởng (0), độ tin cậy x1000, số ms có giọng}.
+JNIEXPORT jintArray JNICALL JNI_FN(detectKey)(JNIEnv* env, jobject, jfloatArray data, jint sampleRate) {
+    jintArray out = env->NewIntArray(4);
+    if (!out || !data) return out;
+    const jsize n = env->GetArrayLength(data);
+    std::vector<float> x(static_cast<size_t>(n));
+    env->GetFloatArrayRegion(data, 0, n, x.data());
+    const band::KeyGuess g = band::estimateKey(band::trackPitch(x, sampleRate), sampleRate);
+    const jint v[4] = {g.root, g.minor ? 1 : 0, static_cast<jint>(g.score * 1000.0f), static_cast<jint>(g.voicedSeconds * 1000.0f)};
+    env->SetIntArrayRegion(out, 0, 4, v);
+    return out;
+}
 }  // extern "C"
