@@ -52,6 +52,10 @@ object AudioEngine {
     /** Cao độ (Hz) từng khung, 0 = không có; khoảng cách khung = [vocalPitchHop] mẫu. */
     external fun trackVocalPitch(data: FloatArray, sampleRate: Int): FloatArray
     external fun vocalPitchHop(sampleRate: Int): Int
+    /** {sampleRate, số kênh} dùng khi xuất file. */
+    external fun exportInfo(): IntArray
+    /** Render [frames] khung (xen kẽ kênh) ngoại tuyến vào [out]. CHỈ gọi khi luồng âm thanh đã đóng ([stop]). */
+    external fun exportRender(out: FloatArray, frames: Int)
     external fun loadSample(id: Int, data: FloatArray, sampleRate: Int): Boolean
     external fun addZone(inst: Int, sample: Int, root: Int, lo: Int, hi: Int, velLo: Int, velHi: Int, gain: Float): Boolean
 

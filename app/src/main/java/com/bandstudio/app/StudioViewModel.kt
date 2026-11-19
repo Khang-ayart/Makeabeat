@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bandstudio.app.audio.AudioEngine
+import com.bandstudio.app.audio.MixExporter
 import com.bandstudio.app.audio.VocalRecorder
 import com.bandstudio.app.model.Arranger
 import com.bandstudio.app.model.VOCAL_SLOT
@@ -171,11 +172,12 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     // =====================================================================================
 
     fun togglePlay() {
+        if (exporting) return
         if (playing) stopPlayback() else startPlayback()
     }
 
     fun startPlayback() {
-        if (project == null) return
+        if (project == null || exporting) return
         publishSong()
         val from = (screen as? Screen.Editor)?.let { editorClip()?.let { c -> c.startBar * BAR_TICKS } } ?: cursorTick
         AudioEngine.play(from)
@@ -233,6 +235,10 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Ứng dụng xuống nền: dừng phát, lưu ngay, engine sẽ bị đóng. */
     fun onBackground() {
+        if (exporting) {  // bộ xuất đang giữ engine: không gửi lệnh nào, chỉ lưu dự án
+            project?.let { store.save(it) }
+            return
+        }
         if (launcherRecording) finishLauncherRecording()
         stopPlayback()
         AudioEngine.allNotesOff()
@@ -1131,6 +1137,114 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             vocalMessage = if (p.followMelody && melody.isEmpty()) "Không dò được giai điệu rõ ràng, piano đệm hợp âm." else null
             cursorTick = 0
             startPlayback()
+        }
+    }
+
+
+    // =====================================================================================
+    // Xuất file (WAV / MP4 cho YouTube)
+    // =====================================================================================
+
+    enum class ExportKind(val ext: String, val mime: String) { MP4("mp4", "video/mp4"), WAV("wav", "audio/wav") }
+
+    var exporting by mutableStateOf(false)
+        private set
+    var exportProgress by mutableFloatStateOf(0f)
+        private set
+    var exportStage by mutableStateOf("")
+        private set
+    /** Tệp vừa xuất xong (để chia sẻ / lưu vào máy). */
+    var exportedFile by mutableStateOf<File?>(null)
+        private set
+    var exportedKind by mutableStateOf(ExportKind.MP4)
+        private set
+    var exportMessage by mutableStateOf<String?>(null)
+
+    fun clearExport() {
+        exportedFile = null
+        exportMessage = null
+    }
+
+    /**
+     * Xuất cả bài đúng như nghe: engine chạy ngoại tuyến (luồng âm thanh tạm đóng), đủ cả giọng, clip, BPM, hiệu ứng, kèm đuôi vang.
+     * Không đụng tới Project gốc.
+     */
+    fun exportMix(kind: ExportKind) {
+        val p = project ?: return
+        if (exporting || vocalBusy || vocalRecording) return
+        val bars = p.endBar
+        if (bars <= 0) {
+            exportMessage = "Chưa có gì để xuất. Hãy thu giọng hoặc tạo beat trước."
+            return
+        }
+        stopPlayback()
+        AudioEngine.allNotesOff()
+        exporting = true
+        exportProgress = 0f
+        exportStage = "Đang render bản phối…"
+        exportedFile = null
+        exportMessage = null
+        // Điều khiển engine (luồng chính): đóng luồng âm thanh, nạp bài không lặp, bắt đầu phát từ đầu.
+        AudioEngine.setMetronome(false)
+        AudioEngine.stop()
+        val info = AudioEngine.exportInfo()
+        val rate = info[0]
+        val channels = info[1].coerceAtLeast(1)
+        AudioEngine.setBpm(p.bpm.toFloat())
+        AudioEngine.setSong(p.encodeForEngine(false, 0, 0, bars * BAR_TICKS))
+        AudioEngine.play(0)
+        val songFrames = (bars * 240.0 / p.bpm * rate).toLong()
+        val tailFrames = (rate * 3.5).toLong()  // đuôi vang
+        val dir = File(getApplication<Application>().cacheDir, "exports").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val safe = p.name.replace(Regex("[^\\p{L}\\p{N}]+"), "_").trim('_').ifEmpty { "bai_nhac" }.take(40)
+        val out = File(dir, "$safe.${kind.ext}")
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.Default) {
+                try {
+                    val maxFrames = songFrames + tailFrames
+                    val pcm = ShortArray((maxFrames * channels).toInt())
+                    val block = 4096
+                    val buf = FloatArray(block * channels)
+                    var done = 0L
+                    var endAt = -1L
+                    while (done < maxFrames) {
+                        val n = minOf(block.toLong(), maxFrames - done).toInt()
+                        AudioEngine.exportRender(buf, n)
+                        val base = (done * channels).toInt()
+                        for (i in 0 until n * channels) {
+                            pcm[base + i] = (buf[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                        }
+                        done += n
+                        if (endAt < 0 && done > 4096 && !AudioEngine.isPlaying()) endAt = done  // bài đã hết: còn render đuôi vang
+                        if (endAt in 0..done && done >= endAt + tailFrames) break
+                        exportProgress = 0.3f * (done.toFloat() / maxFrames)
+                    }
+                    val used = (done * channels).toInt()
+                    val trimmed = if (used == pcm.size) pcm else pcm.copyOf(used)
+                    exportStage = if (kind == ExportKind.MP4) "Đang mã hóa MP4 (YouTube)…" else "Đang ghi WAV…"
+                    if (kind == ExportKind.WAV) {
+                        MixExporter.writeWav(out, trimmed, rate, channels)
+                    } else {
+                        MixExporter.writeMp4(out, trimmed, rate, channels, p.name) { exportProgress = 0.3f + 0.7f * it }
+                    }
+                    true
+                } catch (e: Throwable) {
+                    exportMessage = "Xuất thất bại: ${e.message ?: e.javaClass.simpleName}"
+                    false
+                }
+            }
+            // Trả lại luồng âm thanh cho ứng dụng.
+            AudioEngine.stopTransport()
+            AudioEngine.start()
+            syncEngine()
+            exporting = false
+            if (ok) {
+                exportedFile = out
+                exportedKind = kind
+                exportProgress = 1f
+                exportMessage = "Đã xuất xong."
+            }
         }
     }
 

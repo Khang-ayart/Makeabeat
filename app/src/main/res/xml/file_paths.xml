@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Bản xuất tạm để chia sẻ (YouTube, Zalo, Drive...). -->
+    <cache-path name="exports" path="exports/" />
+</paths>

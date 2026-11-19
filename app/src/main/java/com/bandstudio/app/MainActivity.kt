@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        if (viewModel.exporting) return  // đang xuất: luồng âm thanh do bộ xuất giữ đóng, xong sẽ tự mở lại
         AudioEngine.start()
         viewModel.syncEngine()
     }

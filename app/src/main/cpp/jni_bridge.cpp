@@ -231,4 +231,26 @@ JNIEXPORT jfloatArray JNICALL JNI_FN(trackVocalPitch)(JNIEnv* env, jobject, jflo
     return out;
 }
 JNIEXPORT jint JNICALL JNI_FN(vocalPitchHop)(JNIEnv*, jobject, jint sampleRate) { return band::pitchHop(sampleRate); }
+
+// ---- Xuất file: chạy engine ngoại tuyến khi luồng âm thanh đã đóng (người gọi đảm bảo không còn callback nào) ----
+// {sampleRate, số kênh} của engine (đã đặt khi luồng âm thanh được mở lần gần nhất).
+JNIEXPORT jintArray JNICALL JNI_FN(exportInfo)(JNIEnv* env, jobject) {
+    jintArray out = env->NewIntArray(2);
+    if (!out) return out;
+    const jint v[2] = {gEngine ? gEngine->core().sampleRate() : 48000, gEngine ? gEngine->core().channels() : 2};
+    env->SetIntArrayRegion(out, 0, 2, v);
+    return out;
+}
+
+// Render [frames] khung vào out (xen kẽ các kênh). Chỉ gọi khi luồng âm thanh đã đóng.
+JNIEXPORT void JNICALL JNI_FN(exportRender)(JNIEnv* env, jobject, jfloatArray out, jint frames) {
+    if (!gEngine || !out || frames <= 0) return;
+    const jsize n = env->GetArrayLength(out);
+    const int ch = gEngine->core().channels();
+    if (static_cast<int64_t>(frames) * ch > n) return;
+    jfloat* p = env->GetFloatArrayElements(out, nullptr);
+    if (!p) return;
+    gEngine->core().render(p, frames);
+    env->ReleaseFloatArrayElements(out, p, 0);
+}
 }  // extern "C"

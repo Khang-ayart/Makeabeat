@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -32,6 +33,11 @@ import androidx.compose.ui.unit.dp
 import com.bandstudio.app.StudioViewModel
 import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.Track
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import kotlin.math.roundToInt
 
 /** Mixer + "Tạo beat": chọn BPM, tông, thể loại, kiểu đệm; app dựng sẵn Looper, Piano, Guitar, Drum Pad quanh giọng hát. */
@@ -93,6 +99,8 @@ fun MixerScreen(vm: StudioViewModel) {
                 vm.vocalMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
             }
 
+            ExportCard(vm)
+
             // ---- Các kênh ----
             Text("Các kênh", style = MaterialTheme.typography.titleSmall)
             for (t in project.tracks) Strip(vm, t)
@@ -107,6 +115,46 @@ fun MixerScreen(vm: StudioViewModel) {
             RoundButton(onClick = vm::togglePlay, size = 54.dp, color = MaterialTheme.colorScheme.primary) {
                 if (vm.playing) StopGlyph(Modifier.size(26.dp), Color(0xFF0B1330)) else PlayGlyph(Modifier.size(26.dp), Color(0xFF0B1330))
             }
+        }
+    }
+}
+
+@Composable
+private fun ExportCard(vm: StudioViewModel) {
+    val ctx = LocalContext.current
+    var saved by remember { mutableStateOf<String?>(null) }
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Xuất bản nhạc", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "MP4 là định dạng đăng thẳng lên YouTube (âm thanh chất lượng cao + ảnh bìa). WAV là bản gốc không nén. Xuất đúng như bạn đang nghe; project vẫn giữ nguyên để chỉnh tiếp.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { saved = null; vm.exportMix(StudioViewModel.ExportKind.MP4) }, enabled = !vm.exporting, modifier = Modifier.weight(1f)) { Text("Xuất MP4 (YouTube)") }
+            OutlinedButton(onClick = { saved = null; vm.exportMix(StudioViewModel.ExportKind.WAV) }, enabled = !vm.exporting, modifier = Modifier.weight(1f)) { Text("Xuất WAV") }
+        }
+        if (vm.exporting) {
+            Text(vm.exportStage, style = MaterialTheme.typography.labelLarge)
+            Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surface)) {
+                Box(Modifier.fillMaxWidth(vm.exportProgress.coerceIn(0f, 1f)).height(8.dp).background(MaterialTheme.colorScheme.primary))
+            }
+            Text("Đừng thoát ứng dụng cho tới khi xong.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        vm.exportMessage?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
+        val f = vm.exportedFile
+        if (f != null && !vm.exporting) {
+            val kind = vm.exportedKind
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { ExportActions.share(ctx, f, kind.mime) }) { Text("Gửi / đăng") }
+                OutlinedButton(onClick = {
+                    val ok = ExportActions.saveToDevice(ctx, f, kind.mime, kind == StudioViewModel.ExportKind.MP4)
+                    saved = if (ok) "Đã lưu vào ${if (kind == StudioViewModel.ExportKind.MP4) "Movies" else "Music"}/BandStudio." else "Máy cũ hoặc lỗi: dùng nút Gửi / đăng để lưu vào Drive hay Zalo."
+                }) { Text("Lưu vào máy") }
+            }
+            saved?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }

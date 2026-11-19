@@ -87,6 +87,8 @@ public:
 
     // ---- Đọc từ luồng bất kỳ ----
     double beatPosition() const noexcept { return beatPosPublished_.load(std::memory_order_relaxed); }
+    int sampleRate() const noexcept { return sampleRate_; }
+    int channels() const noexcept { return channels_; }
     bool isPlaying() const noexcept { return playingPublished_.load(std::memory_order_relaxed); }
     int activeVoiceCount() const noexcept { return activeVoicesPublished_.load(std::memory_order_relaxed); }
 
