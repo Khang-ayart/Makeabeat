@@ -218,4 +218,17 @@ JNIEXPORT jintArray JNICALL JNI_FN(detectKey)(JNIEnv* env, jobject, jfloatArray 
     env->SetIntArrayRegion(out, 0, 4, v);
     return out;
 }
+
+// Cao độ (Hz) từng khung của bản thu (0 = không có cao độ); khoảng cách khung = vocalPitchHop mẫu.
+JNIEXPORT jfloatArray JNICALL JNI_FN(trackVocalPitch)(JNIEnv* env, jobject, jfloatArray data, jint sampleRate) {
+    if (!data) return nullptr;
+    const jsize n = env->GetArrayLength(data);
+    std::vector<float> x(static_cast<size_t>(n));
+    env->GetFloatArrayRegion(data, 0, n, x.data());
+    const std::vector<float> f = band::trackPitch(x, sampleRate);
+    jfloatArray out = env->NewFloatArray(static_cast<jsize>(f.size()));
+    if (out && !f.empty()) env->SetFloatArrayRegion(out, 0, static_cast<jsize>(f.size()), f.data());
+    return out;
+}
+JNIEXPORT jint JNICALL JNI_FN(vocalPitchHop)(JNIEnv*, jobject, jint sampleRate) { return band::pitchHop(sampleRate); }
 }  // extern "C"

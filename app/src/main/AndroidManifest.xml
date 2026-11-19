@@ -3,8 +3,13 @@
 
     <!--
         CỐ Ý không khai báo quyền INTERNET: ứng dụng không thể gửi dữ liệu ra ngoài.
-        Quyền RECORD_AUDIO sẽ được thêm ở giai đoạn thu âm.
+        Quyền RECORD_AUDIO chỉ để thu giọng hát; bản thu nằm trong bộ nhớ riêng của ứng dụng, không rời máy.
     -->
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
 
     <uses-feature
         android:name="android.hardware.audio.low_latency"

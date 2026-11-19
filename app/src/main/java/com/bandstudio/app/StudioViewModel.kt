@@ -2,6 +2,7 @@ package com.bandstudio.app
 
 import android.app.Application
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -9,10 +10,16 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bandstudio.app.audio.AudioEngine
+import com.bandstudio.app.audio.VocalRecorder
+import com.bandstudio.app.model.Arranger
+import com.bandstudio.app.model.VOCAL_SLOT
+import com.bandstudio.app.model.VocalClip
+import com.bandstudio.app.model.Wav
 import com.bandstudio.app.model.BAR_TICKS
 import com.bandstudio.app.model.Clip
 import com.bandstudio.app.model.Genre
 import com.bandstudio.app.model.Instrument
+import com.bandstudio.app.model.KEY_NAMES
 import com.bandstudio.app.model.MAX_BARS
 import com.bandstudio.app.model.MAX_CLIP_BARS
 import com.bandstudio.app.model.MAX_TRACKS
@@ -36,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -46,6 +54,10 @@ sealed interface Screen {
     data class Editor(val trackId: Int, val clipId: Int) : Screen
     /** Lưới Looper: pad là nhịp lặp, bật/tắt bám theo đồng hồ chung. */
     data class Launcher(val trackId: Int) : Screen
+    /** Thu giọng, lọc ồn, auto-tune, nghe lại. */
+    data object Vocal : Screen
+    /** Trộn các track, hiệu ứng giọng, "Tạo beat". */
+    data object Mixer : Screen
 }
 
 /**
@@ -129,7 +141,9 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val tracks = project?.tracks.orEmpty()
         for (i in 0 until MAX_TRACKS) {
             val t = tracks.getOrNull(i)
-            AudioEngine.setTrackMix(i, t?.volume ?: 0.8f, t?.pan ?: 0f, t?.mute ?: false, t?.solo ?: false)
+            val muteForTake = vocalRecording && t?.instrument?.isVocal == true  // đang thu đè: không phát lại giọng cũ
+            AudioEngine.setTrackMix(i, t?.volume ?: 0.8f, t?.pan ?: 0f, (t?.mute ?: false) || muteForTake, t?.solo ?: false)
+            t?.vocal?.let { AudioEngine.setVocalFx(i, it.reverb, it.comp, it.bright) }
         }
     }
 
@@ -181,9 +195,10 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     /** Gọi mỗi khung hình từ giao diện: cập nhật vị trí đầu phát, phát hiện hết bài. */
     fun poll() {
         if (screen is Screen.Launcher) pollLauncher()
+        pollVocal()
         if (!playing) return
         if (AudioEngine.isPlaying()) {
-            playheadTick = (AudioEngine.beatPosition() * PPQ).toInt()
+            playheadTick = (AudioEngine.beatPosition() * PPQ).toInt().coerceAtLeast(0)
         } else if (System.nanoTime() > graceUntilNanos) {
             playing = false
             recording = false
@@ -250,6 +265,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         selectedClipId = null
         screen = Screen.Studio
         syncEngine()
+        loadVocalFromProject()
     }
 
     fun closeProject() {
@@ -275,6 +291,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     fun back(): Boolean = when (screen) {
         is Screen.Editor -> { exitEditor(); true }
         is Screen.Launcher -> { exitLauncher(); true }
+        Screen.Vocal, Screen.Mixer -> { leaveToStudio(); true }
         Screen.Studio -> { closeProject(); true }
         Screen.Home -> false
     }
@@ -788,5 +805,330 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 c.copy(notes = c.notes.filterNot { it.pitch == pitch && it.start == start } + NoteEvent(start, dur, pitch))
             }
         }
+    }
+
+    // =====================================================================================
+    // Vocal: thu âm, lọc ồn, auto-tune, nghe lại
+    // =====================================================================================
+
+    private val vocalDir = File(app.filesDir, "vocals")
+    private val recorder = VocalRecorder()
+
+    var vocalRecording by mutableStateOf(false)
+        private set
+    /** Đang xử lý bản thu (lọc ồn / auto-tune / nạp vào engine). */
+    var vocalBusy by mutableStateOf(false)
+        private set
+    var vocalLevel by mutableFloatStateOf(0f)
+        private set
+    var vocalSeconds by mutableFloatStateOf(0f)
+        private set
+    var vocalCountIn by mutableStateOf(false)
+        private set
+    var vocalMessage by mutableStateOf<String?>(null)
+    /** Tông đoán được từ giọng, ví dụ "Am" (để hiện cho người dùng). */
+    var detectedKey by mutableStateOf<String?>(null)
+        private set
+
+    private var countInEndNanos = 0L
+    private var recordPlayNanos = 0L
+    private var recordCountInMs = 0
+    private var vocalSamples: FloatArray? = null     // bản đã xử lý đang nằm trong engine (đủ độ dài, chưa cắt đầu)
+    private var vocalSamplesFile: String? = null
+
+    private fun vocalClip(): VocalClip? = project?.tracks?.firstOrNull { it.instrument.isVocal }?.vocal
+    private fun vocalTrackId(): Int? = project?.tracks?.firstOrNull { it.instrument.isVocal }?.id
+
+    fun openVocal() {
+        if (project == null) return
+        stopPlayback()
+        AudioEngine.allNotesOff()
+        vocalMessage = null
+        screen = Screen.Vocal
+        publishSong()
+    }
+
+    fun openMixer() {
+        if (project == null) return
+        stopPlayback()
+        AudioEngine.allNotesOff()
+        screen = Screen.Mixer
+        publishSong()
+    }
+
+    fun leaveToStudio() {
+        if (vocalRecording) stopVocalRecording()
+        stopPlayback()
+        AudioEngine.allNotesOff()
+        screen = Screen.Studio
+        publishSong()
+    }
+
+    private fun pollVocal() {
+        if (vocalRecording) {
+            vocalLevel = recorder.level
+            vocalSeconds = recorder.seconds
+            if (vocalCountIn && System.nanoTime() >= countInEndNanos) {
+                vocalCountIn = false
+                AudioEngine.setMetronome(metronome)  // hết đếm nhịp: trả metronome về ý người dùng
+            }
+            if (!recorder.running) stopVocalRecording()  // chạm trần độ dài
+        }
+    }
+
+    /**
+     * Bắt đầu thu: micro mở trước, rồi đếm nhịp 1 ô (metronome) và phát beat từ ô 1. Cần quyền micro (giao diện xin trước).
+     * Giọng cũ (nếu có) tạm im để thu đè.
+     */
+    fun startVocalRecording(): Boolean {
+        val p = project ?: return false
+        if (vocalRecording || vocalBusy) return false
+        if (vocalTrackId() == null && p.tracks.size >= MAX_TRACKS) {
+            vocalMessage = "Đã đủ $MAX_TRACKS track, xóa bớt một track trước khi thu giọng."
+            return false
+        }
+        stopPlayback()
+        publishSong()
+        vocalRecording = true
+        syncMix()  // tắt tiếng giọng cũ trong lúc thu
+        if (!recorder.start()) {
+            vocalRecording = false
+            syncMix()
+            vocalMessage = "Không mở được micro. Kiểm tra quyền ghi âm của ứng dụng."
+            return false
+        }
+        vocalMessage = null
+        recordCountInMs = (240_000.0 / p.bpm).roundToInt()
+        AudioEngine.setMetronome(true)
+        AudioEngine.play(-BAR_TICKS)
+        recordPlayNanos = System.nanoTime()
+        playing = true
+        playheadTick = 0
+        graceUntilNanos = recordPlayNanos + 600_000_000L
+        countInEndNanos = recordPlayNanos + recordCountInMs * 1_000_000L
+        vocalCountIn = true
+        return true
+    }
+
+    /** Dừng thu, rồi xử lý nền: lưu bản gốc, lọc ồn (mặc định bật), auto-tune nếu chọn, đoán tông, nạp vào engine. */
+    fun stopVocalRecording() {
+        if (!vocalRecording) return
+        val data = recorder.stop()
+        val startDelayMs = ((recordPlayNanos - recorder.startedNanos) / 1_000_000.0)
+        stopPlayback()
+        AudioEngine.setMetronome(metronome)
+        vocalCountIn = false
+        vocalRecording = false
+        syncMix()
+        if (data == null) {
+            vocalMessage = "Bản thu quá ngắn, thử lại nhé."
+            return
+        }
+        // Điểm giây 0 của bài trong bản thu = đếm nhịp + độ lệch giữa lúc mở micro và lúc engine phát + trễ loa + trễ micro.
+        val outLat = AudioEngine.latencyMs().let { if (it > 0) it else 45.0 }
+        val sync = (recordCountInMs + startDelayMs + 10.0 + outLat + IN_LATENCY_MS).roundToInt().coerceIn(0, 8000)
+        val prev = vocalClip()
+        val id = System.currentTimeMillis().toString(36)
+        val clip = VocalClip(
+            rawFile = "$id-raw.wav", file = "$id.wav", sampleRate = recorder.sampleRate,
+            lengthMs = (data.size * 1000L / recorder.sampleRate).toInt(), syncMs = sync,
+            denoise = prev?.denoise ?: true, tune = prev?.tune ?: false,
+            tuneStrength = prev?.tuneStrength ?: 0.85f, tuneSpeed = prev?.tuneSpeed ?: 0.6f, tuneChromatic = prev?.tuneChromatic ?: false,
+            reverb = prev?.reverb ?: 0.22f, comp = prev?.comp ?: 0.6f, bright = prev?.bright ?: 0.4f, gain = prev?.gain ?: 1.0f,
+        )
+        vocalBusy = true
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                try {
+                    vocalDir.mkdirs()
+                    File(vocalDir, clip.rawFile).writeBytes(Wav.encode16(data, clip.sampleRate))
+                    val key = AudioEngine.detectKey(data, clip.sampleRate)
+                    val keep = project ?: return@withContext null
+                    val processed = renderVocal(clip, keep.keyRoot, keep.minor)
+                    Pair(processed, key)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (result == null || result.first == null) {
+                vocalMessage = "Xử lý bản thu thất bại. Thử thu lại."
+            } else {
+                val k = result.second
+                val confident = k.size >= 4 && k[2] >= 450 && k[3] >= 2000
+                if (confident) detectedKey = KEY_NAMES[k[0]] + if (k[1] == 1) "m" else ""
+                commitVocal(clip, if (confident) Pair(k[0], k[1] == 1) else null)
+                vocalSamples = result.first
+                vocalSamplesFile = clip.file
+                withContext(Dispatchers.Default) { pushVocalToEngine(clip) }
+                val old = prev
+                if (old != null) { File(vocalDir, old.rawFile).delete(); File(vocalDir, old.file).delete() }
+                vocalMessage = if (confident) "Đã thu xong. Tông đoán được: $detectedKey" else "Đã thu xong."
+            }
+            vocalBusy = false
+        }
+    }
+
+    /** Chạy lại xử lý từ bản gốc với lựa chọn hiện tại (lọc ồn, auto-tune, tông). */
+    private fun renderVocal(clip: VocalClip, key: Int, minor: Boolean): FloatArray? {
+        val raw = Wav.parse(File(vocalDir, clip.rawFile).readBytes()) ?: return null
+        val x = raw.samples
+        if (clip.denoise) AudioEngine.denoiseVocal(x, raw.sampleRate, 0.6f, 0)
+        if (clip.tune) AudioEngine.autoTuneVocal(x, raw.sampleRate, key, minor, clip.tuneChromatic, clip.tuneStrength, clip.tuneSpeed)
+        var peak = 0f
+        for (v in x) { val a = if (v < 0) -v else v; if (a > peak) peak = a }
+        if (peak > 1e-4f) {  // chuẩn hóa đỉnh về ~ -1 dBFS (tối đa nâng 12 lần) để mọi bản thu có mức tương đương nhau
+            val g = minOf(0.89f / peak, 12f)
+            for (i in x.indices) x[i] *= g
+        }
+        File(vocalDir, clip.file).writeBytes(Wav.encode16(x, raw.sampleRate))
+        return x
+    }
+
+    /** Cắt phần đầu theo độ dịch rồi nạp vào ô giọng của engine (luồng nền). */
+    private fun pushVocalToEngine(clip: VocalClip) {
+        val x = vocalSamples ?: return
+        if (x.size < 4) return
+        val start = (clip.trimMs / 1000.0 * clip.sampleRate).toInt().coerceIn(0, x.size - 2)
+        AudioEngine.loadVocal(VOCAL_SLOT, if (start == 0) x else x.copyOfRange(start, x.size), clip.sampleRate)
+    }
+
+    private fun commitVocal(clip: VocalClip, key: Pair<Int, Boolean>?) {
+        commit { p ->
+            val existing = p.tracks.firstOrNull { it.instrument.isVocal }
+            var np = when {
+                existing != null -> mapTrack(p, existing.id) { it.copy(vocal = clip) }
+                p.tracks.size >= MAX_TRACKS -> p
+                else -> p.copy(tracks = p.tracks + Track(p.nextId, "Vocal", Instrument.VOCAL, volume = 0.9f, vocal = clip), nextId = p.nextId + 1)
+            }
+            if (key != null) np = np.copy(keyRoot = key.first, minor = key.second)
+            np
+        }
+    }
+
+    /** Mở dự án: nạp lại giọng (nếu có) vào engine. */
+    private fun loadVocalFromProject() {
+        val clip = vocalClip()
+        if (clip == null) {
+            vocalSamples = null
+            vocalSamplesFile = null
+            AudioEngine.clearVocal(VOCAL_SLOT)
+            return
+        }
+        if (vocalSamplesFile == clip.file && vocalSamples != null) return
+        viewModelScope.launch {
+            vocalBusy = true
+            withContext(Dispatchers.Default) {
+                try {
+                    val f = File(vocalDir, clip.file)
+                    val w = if (f.exists()) Wav.parse(f.readBytes()) else null
+                    if (w != null) {
+                        vocalSamples = w.samples
+                        vocalSamplesFile = clip.file
+                        pushVocalToEngine(clip)
+                    }
+                } catch (e: Exception) { /* thiếu tệp: bỏ qua, track vẫn mở được */ }
+            }
+            vocalBusy = false
+        }
+    }
+
+    /** Đổi lựa chọn xử lý rồi chạy lại từ bản gốc. */
+    fun applyVocalOptions(denoise: Boolean, tune: Boolean, strength: Float, speed: Float, chromatic: Boolean) {
+        val clip = vocalClip() ?: return
+        val p = project ?: return
+        if (vocalBusy || vocalRecording) return
+        val next = clip.copy(denoise = denoise, tune = tune, tuneStrength = strength, tuneSpeed = speed, tuneChromatic = chromatic)
+        vocalBusy = true
+        viewModelScope.launch {
+            val x = withContext(Dispatchers.Default) {
+                try { renderVocal(next, p.keyRoot, p.minor) } catch (e: Exception) { null }
+            }
+            if (x == null) {
+                vocalMessage = "Không đọc được bản thu gốc."
+            } else {
+                vocalSamples = x
+                vocalSamplesFile = next.file
+                withContext(Dispatchers.Default) { pushVocalToEngine(next) }
+                setVocalClip(next)
+                vocalMessage = "Đã áp dụng."
+            }
+            vocalBusy = false
+        }
+    }
+
+    private fun setVocalClip(c: VocalClip) {
+        val id = vocalTrackId() ?: return
+        update { p -> mapTrack(p, id) { it.copy(vocal = c) } }
+    }
+
+    /** Dịch giọng sớm (+) / muộn (-) so với beat, tính bằng ms. */
+    fun nudgeVocal(deltaMs: Int) {
+        val clip = vocalClip() ?: return
+        if (vocalBusy || vocalRecording) return
+        val next = clip.copy(nudgeMs = (clip.nudgeMs + deltaMs).coerceIn(-1500, 1500))
+        setVocalClip(next)
+        viewModelScope.launch(Dispatchers.Default) { pushVocalToEngine(next) }
+    }
+
+    fun setVocalMix(reverb: Float? = null, comp: Float? = null, bright: Float? = null, gain: Float? = null) {
+        val clip = vocalClip() ?: return
+        setVocalClip(clip.copy(
+            reverb = reverb ?: clip.reverb, comp = comp ?: clip.comp, bright = bright ?: clip.bright,
+            gain = (gain ?: clip.gain).coerceIn(0.1f, 1.5f),
+        ))
+    }
+
+    fun deleteVocal() {
+        val id = vocalTrackId() ?: return
+        val clip = vocalClip()
+        stopPlayback()
+        commit { p -> p.copy(tracks = p.tracks.filter { it.id != id }) }
+        AudioEngine.clearVocal(VOCAL_SLOT)
+        vocalSamples = null
+        vocalSamplesFile = null
+        detectedKey = null
+        if (clip != null) viewModelScope.launch(Dispatchers.IO) { File(vocalDir, clip.rawFile).delete(); File(vocalDir, clip.file).delete() }
+    }
+
+    /** Tông và thang của bài (dùng cho auto-tune và "Tạo beat"). */
+    fun setKey(root: Int, minor: Boolean) = update { it.copy(keyRoot = Math.floorMod(root, 12), minor = minor) }
+
+    // =====================================================================================
+    // Tạo beat từ giọng
+    // =====================================================================================
+
+    fun setArrangeOptions(genreId: String? = null, followMelody: Boolean? = null) =
+        update { it.copy(arrangeGenre = genreId ?: it.arrangeGenre, followMelody = followMelody ?: it.followMelody) }
+
+    /** Dựng Looper + Piano + Guitar + Drum Pad theo BPM, tông, thể loại hiện tại rồi phát ngay từ đầu. */
+    fun arrangeBeat() {
+        val p = project ?: return
+        val genre = Catalog.genre(p.arrangeGenre) ?: Catalog.genres.first()
+        val clip = vocalClip()
+        val vocalBars = clip?.bars(p.bpm) ?: 8
+        if (vocalBusy) return
+        stopPlayback()
+        viewModelScope.launch {
+            vocalBusy = true
+            val melody = if (p.followMelody && clip != null) {
+                withContext(Dispatchers.Default) {
+                    val x = vocalSamples
+                    if (x == null) emptyList() else {
+                        val hz = AudioEngine.trackVocalPitch(x, clip.sampleRate)
+                        Arranger.melodyFromPitch(hz, AudioEngine.vocalPitchHop(clip.sampleRate), clip.sampleRate, clip.startMs, p.bpm, p.keyRoot, p.minor)
+                    }
+                }
+            } else emptyList()
+            commit { cur -> Arranger.arrange(cur, genre, vocalBars, melody) }
+            vocalBusy = false
+            vocalMessage = if (p.followMelody && melody.isEmpty()) "Không dò được giai điệu rõ ràng, piano đệm hợp âm." else null
+            cursorTick = 0
+            startPlayback()
+        }
+    }
+
+    companion object {
+        /** Ước lượng độ trễ micro (ms) khi không đo được. */
+        const val IN_LATENCY_MS = 35.0
     }
 }

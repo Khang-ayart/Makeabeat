@@ -15,6 +15,8 @@ import com.bandstudio.app.ui.BandStudioTheme
 import com.bandstudio.app.ui.EditorScreen
 import com.bandstudio.app.ui.HomeScreen
 import com.bandstudio.app.ui.LauncherScreen
+import com.bandstudio.app.ui.MixerScreen
+import com.bandstudio.app.ui.VocalScreen
 import com.bandstudio.app.ui.StudioScreen
 
 class MainActivity : ComponentActivity() {
@@ -65,5 +67,7 @@ private fun AppRoot(vm: StudioViewModel) {
         Screen.Studio -> StudioScreen(vm)
         is Screen.Editor -> EditorScreen(vm)
         is Screen.Launcher -> LauncherScreen(vm)
+        Screen.Vocal -> VocalScreen(vm)
+        Screen.Mixer -> MixerScreen(vm)
     }
 }

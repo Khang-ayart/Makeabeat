@@ -40,4 +40,24 @@ object Wav {
         }
         return null
     }
+
+    /** Ghi WAV PCM 16-bit mono (clip về [-1, 1]). */
+    fun encode16(samples: FloatArray, sampleRate: Int): ByteArray {
+        val dataLen = samples.size * 2
+        val b = ByteArray(44 + dataLen)
+        fun put32(i: Int, v: Int) { b[i] = v.toByte(); b[i + 1] = (v shr 8).toByte(); b[i + 2] = (v shr 16).toByte(); b[i + 3] = (v shr 24).toByte() }
+        fun put16(i: Int, v: Int) { b[i] = v.toByte(); b[i + 1] = (v shr 8).toByte() }
+        "RIFF".toByteArray(Charsets.US_ASCII).copyInto(b, 0)
+        put32(4, 36 + dataLen)
+        "WAVEfmt ".toByteArray(Charsets.US_ASCII).copyInto(b, 8)
+        put32(16, 16); put16(20, 1); put16(22, 1); put32(24, sampleRate); put32(28, sampleRate * 2); put16(32, 2); put16(34, 16)
+        "data".toByteArray(Charsets.US_ASCII).copyInto(b, 36)
+        put32(40, dataLen)
+        for (i in samples.indices) {
+            val v = (samples[i].coerceIn(-1f, 1f) * 32767f).toInt()
+            b[44 + i * 2] = v.toByte()
+            b[45 + i * 2] = (v shr 8).toByte()
+        }
+        return b
+    }
 }

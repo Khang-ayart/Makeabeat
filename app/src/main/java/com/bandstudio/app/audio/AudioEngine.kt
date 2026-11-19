@@ -49,6 +49,9 @@ object AudioEngine {
     external fun autoTuneVocal(data: FloatArray, sampleRate: Int, keyRoot: Int, minor: Boolean, chromatic: Boolean, strength: Float, speed: Float)
     /** Đoán tông: {chủ âm, thứ(1)/trưởng(0), độ tin cậy x1000, ms có giọng}. */
     external fun detectKey(data: FloatArray, sampleRate: Int): IntArray
+    /** Cao độ (Hz) từng khung, 0 = không có; khoảng cách khung = [vocalPitchHop] mẫu. */
+    external fun trackVocalPitch(data: FloatArray, sampleRate: Int): FloatArray
+    external fun vocalPitchHop(sampleRate: Int): Int
     external fun loadSample(id: Int, data: FloatArray, sampleRate: Int): Boolean
     external fun addZone(inst: Int, sample: Int, root: Int, lo: Int, hi: Int, velLo: Int, velHi: Int, gain: Float): Boolean
 

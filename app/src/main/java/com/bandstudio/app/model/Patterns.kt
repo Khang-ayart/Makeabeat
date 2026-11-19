@@ -255,8 +255,11 @@ object Patterns {
     }
 
     /** Tất cả cú đánh của một pad (trống/bass/hợp âm) để gửi engine. */
-    fun padHits(genre: Genre, key: Int, pad: Int): List<Hit> =
-        if (isKeyPad(pad)) melodicHits(genre.family, pad, key, genre.minor) else swung(withImpact(genre, pad, phrase(genre.family, pad)), swingOf(genre.id))
+    fun padHits(genre: Genre, key: Int, pad: Int): List<Hit> = padHitsIn(genre, key, genre.minor, pad)
+
+    /** Như [padHits] nhưng thang trưởng/thứ do người gọi chọn (ví dụ tông của bài chứ không phải mặc định của thể loại). */
+    fun padHitsIn(genre: Genre, key: Int, minor: Boolean, pad: Int): List<Hit> =
+        if (isKeyPad(pad)) melodicHits(genre.family, pad, key, minor) else swung(withImpact(genre, pad, phrase(genre.family, pad)), swingOf(genre.id))
 
     /** Pad crash: thêm một cú crash vào đầu mỗi cụm 4 ô nhịp (điểm chuyển đoạn) nếu nhịp gốc chưa có cú nào ở đó. */
     private fun withImpact(genre: Genre, pad: Int, ph: List<Hit>): List<Hit> {

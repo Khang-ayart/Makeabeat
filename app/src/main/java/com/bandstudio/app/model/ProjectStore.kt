@@ -11,6 +11,10 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
     put("bpm", bpm)
     put("nextId", nextId)
     put("updatedAt", updatedAt)
+    put("key", keyRoot)
+    put("minor", minor)
+    put("arrGenre", arrangeGenre)
+    put("follow", followMelody)
     put("tracks", JSONArray().also { arr ->
         for (t in tracks) arr.put(JSONObject().apply {
             put("id", t.id)
@@ -20,6 +24,16 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
             put("pan", t.pan.toDouble())
             put("mute", t.mute)
             put("solo", t.solo)
+            if (t.auto) put("auto", true)
+            t.vocal?.let { v ->
+                put("vocal", JSONObject().apply {
+                    put("raw", v.rawFile); put("file", v.file); put("rate", v.sampleRate); put("len", v.lengthMs)
+                    put("sync", v.syncMs); put("nudge", v.nudgeMs)
+                    put("denoise", v.denoise); put("tune", v.tune)
+                    put("tuneStr", v.tuneStrength.toDouble()); put("tuneSpd", v.tuneSpeed.toDouble()); put("chroma", v.tuneChromatic)
+                    put("reverb", v.reverb.toDouble()); put("comp", v.comp.toDouble()); put("bright", v.bright.toDouble()); put("gain", v.gain.toDouble())
+                })
+            }
             if (t.instrument.isLooper) {
                 put("genre", t.genreId)
                 put("key", t.keyRoot)
@@ -62,6 +76,19 @@ fun projectFromJson(o: JSONObject): Project {
             val e = ka.optJSONArray(j) ?: continue
             kit.add(PadSpec(e.optString(0, ""), e.optInt(1, 0)))
         }
+        val vo = t.optJSONObject("vocal")
+        val vocal = vo?.let {
+            VocalClip(
+                rawFile = it.optString("raw", ""), file = it.optString("file", ""),
+                sampleRate = it.optInt("rate", 44100).coerceIn(8000, 192000), lengthMs = it.optInt("len", 0).coerceAtLeast(0),
+                syncMs = it.optInt("sync", 0), nudgeMs = it.optInt("nudge", 0).coerceIn(-2000, 2000),
+                denoise = it.optBoolean("denoise", true), tune = it.optBoolean("tune", false),
+                tuneStrength = it.optDouble("tuneStr", 0.85).toFloat().coerceIn(0f, 1f),
+                tuneSpeed = it.optDouble("tuneSpd", 0.6).toFloat().coerceIn(0f, 1f), tuneChromatic = it.optBoolean("chroma", false),
+                reverb = it.optDouble("reverb", 0.22).toFloat().coerceIn(0f, 1f), comp = it.optDouble("comp", 0.6).toFloat().coerceIn(0f, 1f),
+                bright = it.optDouble("bright", 0.4).toFloat().coerceIn(0f, 1f), gain = it.optDouble("gain", 1.0).toFloat().coerceIn(0.1f, 1.5f),
+            )
+        }
         tracks.add(
             Track(
                 id = t.getInt("id"),
@@ -75,6 +102,8 @@ fun projectFromJson(o: JSONObject): Project {
                 genreId = t.optString("genre", ""),
                 kit = kit,
                 keyRoot = Math.floorMod(t.optInt("key", DEFAULT_KEY), 12),
+                vocal = vocal,
+                auto = t.optBoolean("auto", false),
             ),
         )
     }
@@ -85,6 +114,10 @@ fun projectFromJson(o: JSONObject): Project {
         tracks = tracks.take(MAX_TRACKS),
         nextId = o.optInt("nextId", 1),
         updatedAt = o.optLong("updatedAt", 0L),
+        keyRoot = Math.floorMod(o.optInt("key", DEFAULT_KEY), 12),
+        minor = o.optBoolean("minor", false),
+        arrangeGenre = o.optString("arrGenre", "hiphop"),
+        followMelody = o.optBoolean("follow", false),
     )
 }
 

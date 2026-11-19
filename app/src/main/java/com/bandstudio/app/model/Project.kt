@@ -27,9 +27,11 @@ enum class Instrument(
     BASS(3, "Bass", false, 0xFF9B6BFF, 40, 36),
     DRUM_KIT(4, "Drum Kit", true, 0xFF2FBF8F, 0, 0),
     DRUM_PAD(5, "Drum Pad", true, 0xFF1FB5D4, 0, 0),
-    LOOPER(6, "Looper", false, 0xFFE0568F, 0, 0);
+    LOOPER(6, "Looper", false, 0xFFE0568F, 0, 0),
+    VOCAL(9, "Vocal", false, 0xFFFFD166, 60, 60);
 
     val isLooper: Boolean get() = this == LOOPER
+    val isVocal: Boolean get() = this == VOCAL
 
     /** Nhạc cụ bấm là phát một tiếng ngắn (trống, pad Looper): lưới 1/16, không có nốt kéo dài. */
     val oneShot: Boolean get() = isDrum || isLooper
@@ -61,6 +63,44 @@ data class Clip(
     val lengthTicks: Int get() = bars * BAR_TICKS
 }
 
+/** Ô mẫu của giọng hát trong engine (mỗi bài chỉ có một track Vocal). */
+const val VOCAL_SLOT = 300
+
+/**
+ * Bản thu giọng của track Vocal. Hai tệp WAV mono 16-bit trong thư mục vocal của dự án: [rawFile] (nguyên bản vừa thu)
+ * và [file] (đã lọc ồn / auto-tune / chuẩn hóa, là bản được phát). Xử lý luôn chạy lại từ bản gốc nên đổi ý thoải mái.
+ */
+data class VocalClip(
+    val rawFile: String,
+    val file: String,
+    val sampleRate: Int,
+    val lengthMs: Int,
+    /** Vị trí (ms trong bản thu) của giây 0 của bài: đếm nhịp + độ trễ thiết bị. */
+    val syncMs: Int = 0,
+    /** Người dùng dịch giọng: dương = giọng nghe SỚM hơn (cắt thêm đầu bản thu), âm = muộn hơn. */
+    val nudgeMs: Int = 0,
+    val denoise: Boolean = true,
+    val tune: Boolean = false,
+    val tuneStrength: Float = 0.85f,
+    val tuneSpeed: Float = 0.6f,
+    val tuneChromatic: Boolean = false,
+    val reverb: Float = 0.22f,
+    val comp: Float = 0.6f,
+    val bright: Float = 0.4f,
+    val gain: Float = 1.0f,
+) {
+    /** Vị trí trong bản thu ứng với giây 0 của bài, đã tính cả dịch. */
+    val startMs: Int get() = syncMs + nudgeMs
+    /** Số ms đầu bản thu bị cắt khi nạp vào engine. */
+    val trimMs: Int get() = maxOf(0, startMs)
+    /** Độ trễ (ms) trước khi giọng bắt đầu trong bài (khi bản thu bắt đầu SAU giây 0). */
+    val offsetMs: Int get() = maxOf(0, -startMs)
+    /** Độ dài phát trong engine (ms). */
+    val playMs: Int get() = maxOf(0, lengthMs - trimMs)
+    /** Bài cần bao nhiêu ô nhịp để phát hết giọng ở [bpm]. */
+    fun bars(bpm: Int): Int = Math.ceil((offsetMs + playMs) / 1000.0 * bpm / 240.0).toInt()
+}
+
 data class Track(
     val id: Int,
     val name: String,
@@ -75,6 +115,10 @@ data class Track(
     val kit: List<PadSpec> = emptyList(),
     /** Chỉ track Looper: tông chung (0=C..11=B) cho bass và hợp âm Keyboard. */
     val keyRoot: Int = DEFAULT_KEY,
+    /** Chỉ track Vocal: bản thu. */
+    val vocal: VocalClip? = null,
+    /** Track do "Tạo beat" sinh ra (được thay khi tạo lại, không đụng tới track của người dùng). */
+    val auto: Boolean = false,
 ) {
     /** Còn trống [startBar, startBar+bars) không (bỏ qua clip [ignoreId])? */
     fun isFree(startBar: Int, bars: Int, ignoreId: Int = -1): Boolean =
@@ -89,9 +133,16 @@ data class Project(
     val tracks: List<Track> = emptyList(),
     val nextId: Int = 1,
     val updatedAt: Long = 0L,
+    /** Tông chung của bài (từ giọng hát hoặc người dùng chọn): dùng cho auto-tune và "Tạo beat". */
+    val keyRoot: Int = DEFAULT_KEY,
+    val minor: Boolean = false,
+    /** Thể loại dùng cho "Tạo beat". */
+    val arrangeGenre: String = "hiphop",
+    /** true: nhạc cụ đánh theo nốt giọng hát (melodic/pop); false: chỉ đệm hợp âm (rap). */
+    val followMelody: Boolean = false,
 ) {
-    /** Ô nhịp cuối cùng có nhạc (0 nếu chưa có clip nào). */
-    val endBar: Int get() = tracks.maxOfOrNull { t -> t.clips.maxOfOrNull { it.endBar } ?: 0 } ?: 0
+    /** Ô nhịp cuối cùng có nhạc hoặc giọng (0 nếu chưa có gì). */
+    val endBar: Int get() = tracks.maxOfOrNull { t -> maxOf(t.clips.maxOfOrNull { it.endBar } ?: 0, t.vocal?.bars(bpm) ?: 0) } ?: 0
 
     fun track(id: Int): Track? = tracks.firstOrNull { it.id == id }
     fun trackIndex(id: Int): Int = tracks.indexOfFirst { it.id == id }
@@ -117,6 +168,14 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
     for (t in used) {
         val flat = ArrayList<Int>()
         var count = 0
+        val vocal = if (launcherTrackId == null && t.instrument.isVocal) t.vocal else null
+        if (vocal != null && vocal.playMs > 0) {  // giọng hát: một "nốt" = (độ trễ ms, độ dài ms, ô mẫu, độ to)
+            flat.add(vocal.offsetMs)
+            flat.add(vocal.playMs)
+            flat.add(VOCAL_SLOT)
+            flat.add((vocal.gain * 100f).toInt().coerceIn(1, 127))
+            count++
+        }
         for (c in if (launcherTrackId != null) emptyList() else t.clips) {
             val base = c.startBar * BAR_TICKS
             val limit = c.lengthTicks
