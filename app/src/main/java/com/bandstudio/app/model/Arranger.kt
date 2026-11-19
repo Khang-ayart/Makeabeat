@@ -252,12 +252,12 @@ object Arranger {
         var lastOnset = -100
         val barSec = 240.0 / bpm
         val stepSec = barSec / 16.0
-        for (f in 1 until n) {
+        for (f in 0 until n) {
             if (env[f] < floor) continue
             val lo = max(0, f - back)
             var avg = 0.0
             for (j in lo until f) avg += env[j]
-            avg /= (f - lo)
+            if (f > lo) avg /= (f - lo)
             if (env[f] > 2.0 * avg + floor * 0.3 && f - lastOnset >= 10) {  // >= 50 ms từ onset trước
                 lastOnset = f
                 val t = f * hop.toDouble() / sampleRate - startMs / 1000.0
