@@ -1,6 +1,7 @@
 package com.bandstudio.app
 
 import com.bandstudio.app.model.Arranger
+import com.bandstudio.app.model.BAR_TICKS
 import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.VOCAL_SLOT
 import com.bandstudio.app.model.VocalClip
