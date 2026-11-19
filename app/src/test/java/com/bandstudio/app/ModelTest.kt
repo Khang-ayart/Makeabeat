@@ -1,6 +1,11 @@
 package com.bandstudio.app
 
+import com.bandstudio.app.model.Arranger
 import com.bandstudio.app.model.Catalog
+import com.bandstudio.app.model.VOCAL_SLOT
+import com.bandstudio.app.model.VocalClip
+import com.bandstudio.app.model.MAX_BARS
+import com.bandstudio.app.model.MAX_TRACKS
 import com.bandstudio.app.model.Clip
 import com.bandstudio.app.model.Instrument
 import com.bandstudio.app.model.NoteEvent
@@ -482,5 +487,92 @@ class ModelTest {
     fun wavParserRejectsGarbage() {
         assertEquals(null, com.bandstudio.app.model.Wav.parse(ByteArray(10)))
         assertEquals(null, com.bandstudio.app.model.Wav.parse(ByteArray(100) { 7 }))
+    }
+
+    private fun vclip(sync: Int = 0, nudge: Int = 0, len: Int = 10_000) =
+        VocalClip(rawFile = "a-raw.wav", file = "a.wav", sampleRate = 44100, lengthMs = len, syncMs = sync, nudgeMs = nudge)
+
+    @Test
+    fun vocalClipTimingTrimsOrDelaysAccordingToSyncAndNudge() {
+        val a = vclip(sync = 300, nudge = -100)
+        assertEquals(200, a.startMs); assertEquals(200, a.trimMs); assertEquals(0, a.offsetMs); assertEquals(9800, a.playMs)
+        val b = vclip(sync = 0, nudge = -100)
+        assertEquals(0, b.trimMs); assertEquals(100, b.offsetMs); assertEquals(10_000, b.playMs)
+        assertEquals(6, b.bars(120))  // 10,1 giây = 5,05 ô nhịp ở 120 BPM
+        assertEquals(5, vclip().bars(120))
+    }
+
+    @Test
+    fun vocalTrackIsEncodedAsOneNoteWithSlotAndNothingInLauncherMode() {
+        val t = Track(1, "Vocal", Instrument.VOCAL, vocal = vclip(sync = 0, nudge = -100))
+        val p = Project("p", "n", tracks = listOf(t))
+        val enc = p.encodeForEngine(false, 0, 0, 0).toList()
+        val want = listOf(100, 10_000, VOCAL_SLOT, 100)
+        assertTrue("không thấy nốt giọng $want trong $enc", (0..enc.size - 4).any { enc.subList(it, it + 4) == want })
+        val launcher = p.encodeForEngine(false, 0, 0, 0, launcherTrackId = 99).toList()
+        assertFalse((0..launcher.size - 4).any { launcher.subList(it, it + 4) == want })
+    }
+
+    @Test
+    fun vocalAndKeySettingsSurviveSaveAndLoad() {
+        val t = Track(1, "Vocal", Instrument.VOCAL, vocal = vclip(sync = 120, nudge = 30).copy(tune = true, denoise = true, reverb = 0.4f), auto = false)
+        val auto = Track(2, "Tự động · Piano", Instrument.PIANO, auto = true)
+        val p = Project("p", "n", tracks = listOf(t, auto), keyRoot = 2, minor = true, arrangeGenre = "trap", followMelody = true)
+        val back = com.bandstudio.app.model.projectFromJson(org.json.JSONObject(p.toJson().toString()))
+        assertEquals(p, back)
+    }
+
+    @Test
+    fun melodyFromPitchTurnsFramesIntoQuantizedNotesInKey() {
+        val hop = 512
+        val hz = FloatArray(80) { i ->
+            when { i < 20 -> 261.63f; i < 28 -> 0f; i < 48 -> 329.63f; else -> 0f }
+        }
+        val notes = Arranger.melodyFromPitch(hz, hop, 44100, startMs = 0, bpm = 120, keyRoot = 0, minor = false)
+        assertEquals(listOf(60, 64), notes.map { it.pitch })
+        assertTrue(notes.all { it.start % 240 == 0 && it.dur % 240 == 0 && it.dur >= 240 })
+        assertTrue(notes[0].start + notes[0].dur <= notes[1].start)
+        // Nốt ngoài thang (C#4 trong C trưởng) được kéo về nốt trong thang; dịch bắt đầu cắt phần đầu.
+        val sharp = Arranger.melodyFromPitch(FloatArray(30) { 277.18f }, hop, 44100, 0, 120, 0, false)
+        assertTrue(sharp.single().pitch in listOf(60, 62))
+        val cut = Arranger.melodyFromPitch(hz, hop, 44100, startMs = 400, bpm = 120, keyRoot = 0, minor = false)
+        assertTrue(cut.all { it.start >= 0 })
+        assertTrue(Arranger.melodyFromPitch(FloatArray(0), hop, 44100, 0, 120, 0, false).isEmpty())
+    }
+
+    @Test
+    fun arrangeBuildsValidAutoTracksAndReplacesOldOnes() {
+        val user = Track(1, "Của tôi", Instrument.BASS)
+        val oldAuto = Track(2, "Tự động · cũ", Instrument.PIANO, auto = true)
+        val vocal = Track(3, "Vocal", Instrument.VOCAL, vocal = vclip(len = 40_000))
+        val base = Project("p", "n", bpm = 90, tracks = listOf(user, oldAuto, vocal), nextId = 10, keyRoot = 9, minor = true)
+        for (genre in Catalog.genres) for (follow in listOf(false, true)) {
+            val melody = if (follow) listOf(NoteEvent(0, 480, 69, 90), NoteEvent(15360, 480, 72, 90)) else emptyList()
+            val out = Arranger.arrange(base.copy(followMelody = follow), genre, vocalBars = 15, melody = melody)
+            assertTrue(out.tracks.size <= MAX_TRACKS)
+            assertTrue("track người dùng bị mất", out.tracks.any { it.id == 1 } && out.tracks.any { it.id == 3 })
+            assertFalse("track tự động cũ còn lại", out.tracks.any { it.id == 2 })
+            val autos = out.tracks.filter { it.auto }
+            assertTrue(autos.any { it.instrument.isLooper } && autos.any { it.instrument == Instrument.PIANO })
+            assertEquals(out.tracks.map { it.id }.size, out.tracks.map { it.id }.toSet().size)
+            for (t in autos) {
+                val sorted = t.clips.sortedBy { it.startBar }
+                for ((i, c) in sorted.withIndex()) {
+                    assertTrue(c.startBar >= 0 && c.endBar <= MAX_BARS)
+                    if (i > 0) assertTrue("clip chồng nhau ở ${t.name}", sorted[i - 1].endBar <= c.startBar)
+                    assertTrue(c.notes.isNotEmpty())
+                    for (n in c.notes) {
+                        assertTrue("${t.name} nốt ngoài clip: ${n.start}+${n.dur} > ${c.lengthTicks}", n.start >= 0 && n.dur > 0 && n.start + n.dur <= c.lengthTicks + 960)
+                        assertTrue(n.pitch in 0..(if (t.instrument.isLooper) 511 else 127))
+                    }
+                }
+            }
+            val total = Arranger.totalBars(15)
+            assertTrue(autos.flatMap { it.clips }.maxOf { it.endBar } <= total)
+            if (follow) assertTrue("piano không có nốt giai điệu", autos.first { it.instrument == Instrument.PIANO }.clips.any { c -> c.notes.any { it.pitch == 69 } })
+        }
+        assertEquals(listOf(Arranger.Section.INTRO, Arranger.Section.VERSE, Arranger.Section.VERSE, Arranger.Section.CHORUS, Arranger.Section.CHORUS, Arranger.Section.OUTRO),
+            Arranger.sections(6))
+        assertTrue(Arranger.totalBars(0) >= 8 && Arranger.totalBars(1000) <= MAX_BARS && Arranger.totalBars(13) % 4 == 0)
     }
 }

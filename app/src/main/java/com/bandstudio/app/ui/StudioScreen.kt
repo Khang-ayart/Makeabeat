@@ -88,6 +88,10 @@ fun StudioScreen(vm: StudioViewModel) {
             .safeDrawingPadding(),
     ) {
         StudioTopBar(vm, project, onRename = { showRename = true })
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = vm::openVocal, modifier = Modifier.weight(1f)) { Text("Vocal: thu giọng") }
+            OutlinedButton(onClick = vm::openMixer, modifier = Modifier.weight(1f)) { Text("Mixer & Tạo beat") }
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (project.tracks.isEmpty()) {
                 EmptyStudio(onAdd = { showPicker = true })
@@ -187,7 +191,7 @@ private fun Timeline(vm: StudioViewModel, project: Project, onAddTrack: () -> Un
             Ruler(vm, barCount)
             Box(Modifier.weight(1f)) {
                 Column(Modifier.width(laneWidth).fillMaxHeight().verticalScroll(vScroll)) {
-                    for (t in project.tracks) Lane(vm, t, barCount)
+                    for (t in project.tracks) Lane(vm, t, barCount, project.bpm)
                 }
                 Playhead(vm, laneWidth)
             }
@@ -261,7 +265,7 @@ private fun Ruler(vm: StudioViewModel, barCount: Int) {
 }
 
 @Composable
-private fun Lane(vm: StudioViewModel, t: Track, barCount: Int) {
+private fun Lane(vm: StudioViewModel, t: Track, barCount: Int, bpm: Int) {
     val barPx = with(LocalDensity.current) { BarW.toPx() }
     val lineColor = MaterialTheme.colorScheme.outline
     Box(
@@ -272,7 +276,8 @@ private fun Lane(vm: StudioViewModel, t: Track, barCount: Int) {
             .pointerInput(t.id) {
                 detectTapGestures { off ->
                     // Chạm vào chỗ trống: bỏ chọn clip trước, chạm lần nữa mới tạo clip mới.
-                    if (vm.selectedClipId != null) vm.selectClip(null) else vm.addClip(t.id, (off.x / barPx).toInt())
+                    if (t.instrument.isVocal) vm.openVocal()
+                    else if (vm.selectedClipId != null) vm.selectClip(null) else vm.addClip(t.id, (off.x / barPx).toInt())
                 }
             },
     ) {
@@ -281,6 +286,20 @@ private fun Lane(vm: StudioViewModel, t: Track, barCount: Int) {
                 val a = if (i % 4 == 0) 0.55f else 0.2f
                 drawLine(lineColor.copy(alpha = a), Offset(i * barPx, 0f), Offset(i * barPx, size.height), 1f)
             }
+        }
+        t.vocal?.let { v ->
+            val startBars = v.offsetMs / 1000f * bpm / 240f
+            val lenBars = v.playMs / 1000f * bpm / 240f
+            Box(
+                Modifier
+                    .offset(x = BarW * startBars)
+                    .width(BarW * lenBars)
+                    .fillMaxHeight()
+                    .padding(vertical = 4.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(t.instrument.color).copy(alpha = 0.55f)),
+                contentAlignment = Alignment.CenterStart,
+            ) { Text("Giọng thu", Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.labelMedium, color = Color.Black) }
         }
         for (c in t.clips) {
             ClipBlock(
@@ -433,7 +452,7 @@ private fun InstrumentPicker(onPick: (Instrument) -> Unit, onDismiss: () -> Unit
         title = { Text("Chọn nhạc cụ") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (pair in Instrument.entries.chunked(2)) {
+                for (pair in Instrument.entries.filter { !it.isVocal }.chunked(2)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         for (inst in pair) InstrumentCard(inst, Modifier.weight(1f)) { onPick(inst) }
                     }
@@ -455,6 +474,7 @@ private fun InstrumentCard(inst: Instrument, modifier: Modifier, onClick: () -> 
         Instrument.DRUM_KIT -> "Trống mộc"
         Instrument.DRUM_PAD -> "Trống điện tử 808"
         Instrument.LOOPER -> "Pad theo thể loại"
+        Instrument.VOCAL -> "Thu giọng hát"
     }
     Column(
         modifier
@@ -526,6 +546,9 @@ private fun TrackDialog(vm: StudioViewModel, t: Track, onClose: () -> Unit) {
                 Slider(value = t.volume, onValueChange = { vm.setTrackVolume(t.id, it) }, valueRange = 0f..1.2f)
                 Text("Trái  –  Phải", style = MaterialTheme.typography.labelLarge)
                 Slider(value = t.pan, onValueChange = { vm.setTrackPan(t.id, it) }, valueRange = -1f..1f)
+                if (t.instrument.isVocal) {
+                    Button(onClick = { onClose(); vm.openVocal() }) { Text("Mở màn thu giọng") }
+                }
                 if (t.instrument.isLooper) {
                     Button(onClick = { onClose(); vm.openLauncher(t.id) }) { Text("Mở lưới Looper") }
                     OutlinedButton(onClick = { showGenres = true }) {

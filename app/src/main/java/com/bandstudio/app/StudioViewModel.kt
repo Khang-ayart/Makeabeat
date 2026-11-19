@@ -826,6 +826,12 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     var vocalCountIn by mutableStateOf(false)
         private set
     var vocalMessage by mutableStateOf<String?>(null)
+    // Lựa chọn xử lý giọng (dùng cho lần thu kế tiếp và cho nút "Áp dụng"). Lọc ồn luôn bật mặc định.
+    var vocalDenoise by mutableStateOf(true)
+    var vocalTune by mutableStateOf(false)
+    var vocalTuneStrength by mutableFloatStateOf(0.85f)
+    var vocalTuneSpeed by mutableFloatStateOf(0.6f)
+    var vocalChromatic by mutableStateOf(false)
     /** Tông đoán được từ giọng, ví dụ "Am" (để hiện cho người dùng). */
     var detectedKey by mutableStateOf<String?>(null)
         private set
@@ -932,8 +938,8 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val clip = VocalClip(
             rawFile = "$id-raw.wav", file = "$id.wav", sampleRate = recorder.sampleRate,
             lengthMs = (data.size * 1000L / recorder.sampleRate).toInt(), syncMs = sync,
-            denoise = prev?.denoise ?: true, tune = prev?.tune ?: false,
-            tuneStrength = prev?.tuneStrength ?: 0.85f, tuneSpeed = prev?.tuneSpeed ?: 0.6f, tuneChromatic = prev?.tuneChromatic ?: false,
+            denoise = vocalDenoise, tune = vocalTune,
+            tuneStrength = vocalTuneStrength, tuneSpeed = vocalTuneSpeed, tuneChromatic = vocalChromatic,
             reverb = prev?.reverb ?: 0.22f, comp = prev?.comp ?: 0.6f, bright = prev?.bright ?: 0.4f, gain = prev?.gain ?: 1.0f,
         )
         vocalBusy = true
@@ -944,7 +950,8 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                     File(vocalDir, clip.rawFile).writeBytes(Wav.encode16(data, clip.sampleRate))
                     val key = AudioEngine.detectKey(data, clip.sampleRate)
                     val keep = project ?: return@withContext null
-                    val processed = renderVocal(clip, keep.keyRoot, keep.minor)
+                    val sure = key.size >= 4 && key[2] >= 450 && key[3] >= 2000
+                    val processed = renderVocal(clip, if (sure) key[0] else keep.keyRoot, if (sure) key[1] == 1 else keep.minor)
                     Pair(processed, key)
                 } catch (e: Exception) {
                     null
@@ -1032,12 +1039,12 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Đổi lựa chọn xử lý rồi chạy lại từ bản gốc. */
-    fun applyVocalOptions(denoise: Boolean, tune: Boolean, strength: Float, speed: Float, chromatic: Boolean) {
+    /** Chạy lại xử lý từ bản gốc với lựa chọn hiện tại (lọc ồn, auto-tune, tông). */
+    fun applyVocalOptions() {
         val clip = vocalClip() ?: return
         val p = project ?: return
         if (vocalBusy || vocalRecording) return
-        val next = clip.copy(denoise = denoise, tune = tune, tuneStrength = strength, tuneSpeed = speed, tuneChromatic = chromatic)
+        val next = clip.copy(denoise = vocalDenoise, tune = vocalTune, tuneStrength = vocalTuneStrength, tuneSpeed = vocalTuneSpeed, tuneChromatic = vocalChromatic)
         vocalBusy = true
         viewModelScope.launch {
             val x = withContext(Dispatchers.Default) {
