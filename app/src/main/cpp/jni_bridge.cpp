@@ -108,6 +108,14 @@ JNIEXPORT jboolean JNICALL JNI_FN(clearVocal)(JNIEnv*, jobject, jint id) {
 JNIEXPORT void JNICALL JNI_FN(setVocalFx)(JNIEnv*, jobject, jint track, jfloat reverb, jfloat comp, jfloat bright) {
     if (gEngine) gEngine->core().setVocalFx(track, reverb, comp, bright);
 }
+JNIEXPORT void JNICALL JNI_FN(enhanceVocal)(JNIEnv* env, jobject, jfloatArray data, jint sampleRate) {
+    if (!data) return;
+    const jsize n = env->GetArrayLength(data);
+    std::vector<float> x(static_cast<size_t>(n));
+    env->GetFloatArrayRegion(data, 0, n, x.data());
+    band::enhanceVocal(x, sampleRate);
+    env->SetFloatArrayRegion(data, 0, n, x.data());
+}
 JNIEXPORT void JNICALL JNI_FN(setVocalBypass)(JNIEnv*, jobject, jint track, jboolean bypass) {
     if (gEngine) gEngine->core().setVocalBypass(track, bypass == JNI_TRUE);
 }

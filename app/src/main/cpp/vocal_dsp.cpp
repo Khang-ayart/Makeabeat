@@ -382,4 +382,108 @@ std::vector<float> timeStretch(const std::vector<float>& x, int sr, double ratio
     return y;
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Làm rõ giọng
+
+namespace {
+
+struct Biquad {
+    double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+    float process(float in) {
+        const double x = in;
+        const double y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return static_cast<float>(y);
+    }
+    void set(double nb0, double nb1, double nb2, double a0, double na1, double na2) {
+        b0 = nb0 / a0; b1 = nb1 / a0; b2 = nb2 / a0; a1 = na1 / a0; a2 = na2 / a0;
+    }
+    // RBJ cookbook
+    static Biquad highpass(double fs, double f, double q) {
+        Biquad b; const double w = 2 * M_PI * f / fs, c = std::cos(w), a = std::sin(w) / (2 * q);
+        b.set((1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + a, -2 * c, 1 - a);
+        return b;
+    }
+    static Biquad peaking(double fs, double f, double q, double gainDb) {
+        Biquad b; const double A = std::pow(10.0, gainDb / 40), w = 2 * M_PI * f / fs, c = std::cos(w), a = std::sin(w) / (2 * q);
+        b.set(1 + a * A, -2 * c, 1 - a * A, 1 + a / A, -2 * c, 1 - a / A);
+        return b;
+    }
+    static Biquad highShelf(double fs, double f, double gainDb) {
+        Biquad b; const double A = std::pow(10.0, gainDb / 40), w = 2 * M_PI * f / fs, c = std::cos(w), s = std::sin(w);
+        const double al = s / 2 * std::sqrt(2.0), t = 2 * std::sqrt(A) * al;
+        b.set(A * ((A + 1) + (A - 1) * c + t), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - t),
+              (A + 1) - (A - 1) * c + t, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - t);
+        return b;
+    }
+};
+
+}  // namespace
+
+void enhanceVocal(std::vector<float>& x, int sampleRate) {
+    const int n = static_cast<int>(x.size());
+    if (sampleRate < 8000 || n < sampleRate / 4) return;
+
+    // 1) EQ: cắt trầm, bớt đục, nâng độ rõ lời và độ thoáng.
+    Biquad hp = Biquad::highpass(sampleRate, 90.0, 0.707);
+    Biquad mud = Biquad::peaking(sampleRate, 320.0, 1.0, -2.5);
+    Biquad presence = Biquad::peaking(sampleRate, 3000.0, 0.9, 4.5);
+    Biquad air = Biquad::highShelf(sampleRate, 7000.0, 3.0);
+    for (int i = 0; i < n; ++i) x[i] = air.process(presence.process(mud.process(hp.process(x[i]))));
+
+    // 2) Mức theo cửa sổ 20 ms.
+    const int win = std::max(1, sampleRate / 50);
+    const int frames = (n + win - 1) / win;
+    std::vector<float> rms(static_cast<size_t>(frames), 0.0f);
+    for (int f = 0; f < frames; ++f) {
+        const int a = f * win, b = std::min(n, a + win);
+        double s = 0;
+        for (int i = a; i < b; ++i) s += static_cast<double>(x[i]) * x[i];
+        rms[static_cast<size_t>(f)] = static_cast<float>(std::sqrt(s / (b - a)));
+    }
+    std::vector<float> sorted = rms;
+    std::sort(sorted.begin(), sorted.end());
+    const float floorLvl = sorted[sorted.size() / 10];             // nền ồn ~ phân vị 10%
+    const float loud = sorted[sorted.size() * 9 / 10];             // lời nói / hát ~ phân vị 90%
+    if (loud < 1e-5f) return;                                      // im lặng
+    const float gate = std::max(floorLvl * 3.0f, loud * 0.06f);    // dưới ngưỡng: không nâng (nền ồn, hơi thở rất nhỏ)
+    const float target = 0.14f;                                    // ~ -17 dBFS RMS
+    const float maxGain = 12.5f;                                   // ~ +22 dB
+
+    // 3) Đường gain theo khung: nâng đoạn nhỏ tới mục tiêu, làm mượt (nhanh khi giảm, chậm khi tăng) để không "bơm".
+    std::vector<float> gain(static_cast<size_t>(frames), 1.0f);
+    float g = 1.0f;
+    const float up = 0.12f, down = 0.5f;  // hệ số theo khung 20 ms
+    // Mức nền: gain theo phân vị 90% cho phần lớn, và nhích theo từng khung (giữ động lực nhưng không quá chênh)
+    const float baseGain = std::min(maxGain, target / loud);
+    for (int f = 0; f < frames; ++f) {
+        const float r = rms[static_cast<size_t>(f)];
+        float want;
+        if (r < gate) {
+            want = 1.0f;  // không nâng nền
+            // nhưng đừng tụt gain đột ngột giữa các chữ: dùng giá trị trung gian nhỏ
+            want = std::max(1.0f, std::min(baseGain, g));
+            want = 1.0f + (want - 1.0f) * (r / gate) * (r / gate);
+        } else {
+            want = std::min(maxGain, std::max(1.0f, target / r));
+            want = std::min(want, std::max(baseGain, 1.0f) * 2.2f);  // lời to không bị đẩy lên quá mức nền
+        }
+        g += (want - g) * (want > g ? up : down);
+        gain[static_cast<size_t>(f)] = g;
+    }
+
+    // 4) Áp gain nội suy tuyến tính giữa tâm các khung, rồi chặn đỉnh mềm.
+    for (int i = 0; i < n; ++i) {
+        const float pos = (static_cast<float>(i) + 0.5f) / win - 0.5f;
+        const int f0 = std::max(0, std::min(frames - 1, static_cast<int>(std::floor(pos))));
+        const int f1 = std::min(frames - 1, f0 + 1);
+        const float t = std::max(0.0f, std::min(1.0f, pos - f0));
+        const float gi = gain[static_cast<size_t>(f0)] * (1 - t) + gain[static_cast<size_t>(f1)] * t;
+        const float y = x[i] * gi;
+        x[i] = 0.92f * std::tanh(y / 0.92f);  // tuyến tính khi nhỏ, chặn mềm khi gần 1
+    }
+}
+
 }  // namespace band

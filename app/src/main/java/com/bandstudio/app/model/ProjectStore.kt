@@ -35,7 +35,7 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
                 put("vocal", JSONObject().apply {
                     put("raw", v.rawFile); put("file", v.file); put("rate", v.sampleRate); put("len", v.lengthMs)
                     put("sync", v.syncMs); put("nudge", v.nudgeMs)
-                    put("denoise", v.denoise); put("tune", v.tune)
+                    put("denoise", v.denoise); put("enhance", v.enhance); put("tune", v.tune)
                     put("tuneStr", v.tuneStrength.toDouble()); put("tuneSpd", v.tuneSpeed.toDouble()); put("chroma", v.tuneChromatic)
                     put("reverb", v.reverb.toDouble()); put("comp", v.comp.toDouble()); put("bright", v.bright.toDouble()); put("gain", v.gain.toDouble())
                 })
@@ -94,7 +94,7 @@ fun projectFromJson(o: JSONObject): Project {
                 rawFile = it.optString("raw", ""), file = it.optString("file", ""),
                 sampleRate = it.optInt("rate", 44100).coerceIn(8000, 192000), lengthMs = it.optInt("len", 0).coerceAtLeast(0),
                 syncMs = it.optInt("sync", 0), nudgeMs = it.optInt("nudge", 0).coerceIn(-2000, 2000),
-                denoise = it.optBoolean("denoise", true), tune = it.optBoolean("tune", false),
+                denoise = it.optBoolean("denoise", true), enhance = it.optBoolean("enhance", true), tune = it.optBoolean("tune", false),
                 tuneStrength = it.optDouble("tuneStr", 0.85).toFloat().coerceIn(0f, 1f),
                 tuneSpeed = it.optDouble("tuneSpd", 0.6).toFloat().coerceIn(0f, 1f), tuneChromatic = it.optBoolean("chroma", false),
                 reverb = it.optDouble("reverb", 0.22).toFloat().coerceIn(0f, 1f), comp = it.optDouble("comp", 0.6).toFloat().coerceIn(0f, 1f),

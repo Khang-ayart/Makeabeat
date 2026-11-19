@@ -85,6 +85,8 @@ data class VocalClip(
     /** Người dùng dịch giọng: dương = giọng nghe SỚM hơn (cắt thêm đầu bản thu), âm = muộn hơn. */
     val nudgeMs: Int = 0,
     val denoise: Boolean = true,
+    /** Làm rõ giọng (EQ rõ lời + cân mức tự động): cứu bản thu nhỏ / xa micro. */
+    val enhance: Boolean = true,
     val tune: Boolean = false,
     val tuneStrength: Float = 0.85f,
     val tuneSpeed: Float = 0.6f,

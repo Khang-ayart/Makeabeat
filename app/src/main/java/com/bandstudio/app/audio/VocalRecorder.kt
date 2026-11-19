@@ -44,6 +44,8 @@ class VocalRecorder {
             rec.release()
             return false
         }
+        // Tự chỉnh độ nhạy micro / khử ồn của hệ thống nếu máy hỗ trợ (giúp bản thu từ mic điện thoại đỡ nhỏ).
+        try { if (android.media.audiofx.AutomaticGainControl.isAvailable()) android.media.audiofx.AutomaticGainControl.create(rec.audioSessionId)?.enabled = true } catch (e: Exception) { }
         count = 0
         level = 0f
         seconds = 0f

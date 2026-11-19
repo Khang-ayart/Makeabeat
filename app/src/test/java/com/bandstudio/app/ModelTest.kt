@@ -570,7 +570,14 @@ class ModelTest {
             }
             val total = Arranger.totalBars(15)
             assertTrue(autos.flatMap { it.clips }.maxOf { it.endBar } <= total)
-            if (follow) assertTrue("piano không có nốt giai điệu", autos.first { it.instrument == Instrument.PIANO }.clips.any { c -> c.notes.any { it.pitch == 69 } })
+            if (follow) {
+                val bar0 = autos.first { it.instrument == Instrument.PIANO }.clips.first { it.startBar == 0 }.notes.filter { it.start < BAR_TICKS }
+                assertTrue("hợp âm ô 1 không chứa nốt A của giọng", bar0.any { it.pitch % 12 == 9 })
+                assertTrue("thiếu bass theo giọng", autos.any { it.instrument == Instrument.BASS })
+                assertTrue("looper còn hàng nhạc", autos.first { it.instrument.isLooper }.clips.all { c -> c.notes.all { it.pitch < 4 * PADS_PER_ROW } })
+            }
+            val voice = out.tracks.first { it.id == 3 }.volume
+            for (t in autos) assertTrue("${t.name} to hơn giọng", t.volume < voice)
         }
         assertEquals(listOf(Arranger.Section.INTRO, Arranger.Section.VERSE, Arranger.Section.VERSE, Arranger.Section.CHORUS, Arranger.Section.CHORUS, Arranger.Section.OUTRO),
             Arranger.sections(6))
@@ -649,5 +656,32 @@ class ModelTest {
         val many = (0 until 82).map { com.bandstudio.app.model.AudioSource(100 + it, "x", "x", 44100, 1000, slot = 302 + it) }
         p = p.copy(sources = p.sources + many)
         assertNull(E.freeSlot(p))
+    }
+
+    @Test
+    fun chordsFollowTheMelodyAndStayStable() {
+        val mel = listOf(NoteEvent(0, 3600, 69, 90), NoteEvent(BAR_TICKS, 3600, 67, 90))
+        val ch = Arranger.chordsFromMelody(mel, 4, key = 9, minor = true)
+        assertEquals(4, ch.size)
+        assertEquals(0, ch[0].root); assertTrue(ch[0].minor)  // nốt A -> Am
+        val g = (7 - 9 + 12) % 12                               // nốt G tính từ tông A
+        assertTrue("ô 2 phải có hợp âm chứa G", ch[1].intervals.any { (ch[1].root + it) % 12 == g })
+        assertEquals(ch[1].root, ch[2].root); assertEquals(ch[1].minor, ch[2].minor)  // ô trống giữ hợp âm trước
+        assertEquals(ch[2].root, ch[3].root)
+    }
+
+    @Test
+    fun barActivityIsRelativeAndSilentBarsAreZero() {
+        val sr = 8000
+        val bpm = 120  // 1 ô = 2 s
+        val x = FloatArray(sr * 8)
+        for (i in 0 until sr * 2) x[i] = 0.5f * Math.sin(i * 0.3).toFloat()
+        for (i in sr * 4 until sr * 6) x[i] = 0.1f * Math.sin(i * 0.3).toFloat()
+        val a = Arranger.barActivity(x, sr, 0, bpm, 4)
+        assertEquals(1f, a[0], 0.01f); assertEquals(0f, a[1], 0.0001f)
+        assertTrue(a[2] in 0.1f..0.35f); assertEquals(0f, a[3], 0.0001f)
+        val late = Arranger.barActivity(x, sr, -2000, bpm, 4)
+        assertEquals(0f, late[0], 0.0001f); assertEquals(1f, late[1], 0.01f)
+        assertEquals(List(3) { 0f }, Arranger.barActivity(FloatArray(0), sr, 0, bpm, 3))
     }
 }

@@ -114,6 +114,7 @@ fun VocalScreen(vm: StudioViewModel) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text("Xử lý giọng", style = MaterialTheme.typography.titleSmall)
+                SwitchRow("Làm rõ giọng", "Cứu bản thu nhỏ / xa mic: rõ lời hơn, tự cân to nhỏ.", vm.vocalEnhance) { vm.vocalEnhance = it }
                 SwitchRow("Lọc ồn", "Bớt tiếng quạt, tiếng nền. Nên để bật.", vm.vocalDenoise) { vm.vocalDenoise = it }
                 SwitchRow("Auto-tune", "Kéo giọng về đúng nốt trong tông đã chọn.", vm.vocalTune) { vm.vocalTune = it }
                 if (vm.vocalTune) {

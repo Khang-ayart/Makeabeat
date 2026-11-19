@@ -852,7 +852,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 val clip = VocalClip(
                     rawFile = "$id-raw.wav", file = "$id.wav", sampleRate = dec.sampleRate,
                     lengthMs = (dec.samples.size * 1000L / dec.sampleRate).toInt(), syncMs = 0,
-                    denoise = vocalDenoise, tune = vocalTune, tuneStrength = vocalTuneStrength,
+                    denoise = vocalDenoise, enhance = vocalEnhance, tune = vocalTune, tuneStrength = vocalTuneStrength,
                     tuneSpeed = vocalTuneSpeed, tuneChromatic = vocalChromatic,
                     reverb = prev?.reverb ?: 0.22f, comp = prev?.comp ?: 0.6f, bright = prev?.bright ?: 0.4f, gain = prev?.gain ?: 1.0f,
                 )
@@ -981,6 +981,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     var vocalMessage by mutableStateOf<String?>(null)
     // Lựa chọn xử lý giọng (dùng cho lần thu kế tiếp và cho nút "Áp dụng"). Lọc ồn luôn bật mặc định.
     var vocalDenoise by mutableStateOf(true)
+    var vocalEnhance by mutableStateOf(true)
     var vocalTune by mutableStateOf(false)
     var vocalTuneStrength by mutableFloatStateOf(0.85f)
     var vocalTuneSpeed by mutableFloatStateOf(0.6f)
@@ -1091,7 +1092,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val clip = VocalClip(
             rawFile = "$id-raw.wav", file = "$id.wav", sampleRate = recorder.sampleRate,
             lengthMs = (data.size * 1000L / recorder.sampleRate).toInt(), syncMs = sync,
-            denoise = vocalDenoise, tune = vocalTune,
+            denoise = vocalDenoise, enhance = vocalEnhance, tune = vocalTune,
             tuneStrength = vocalTuneStrength, tuneSpeed = vocalTuneSpeed, tuneChromatic = vocalChromatic,
             reverb = prev?.reverb ?: 0.22f, comp = prev?.comp ?: 0.6f, bright = prev?.bright ?: 0.4f, gain = prev?.gain ?: 1.0f,
         )
@@ -1139,6 +1140,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val x = raw.samples
         if (clip.denoise) AudioEngine.denoiseVocal(x, raw.sampleRate, 0.6f, 0)
         if (clip.tune) AudioEngine.autoTuneVocal(x, raw.sampleRate, key, minor, clip.tuneChromatic, clip.tuneStrength, clip.tuneSpeed)
+        if (clip.enhance) AudioEngine.enhanceVocal(x, raw.sampleRate)
         var peak = 0f
         for (v in x) { val a = if (v < 0) -v else v; if (a > peak) peak = a }
         if (peak > 1e-4f) {  // chuẩn hóa đỉnh về ~ -1 dBFS (tối đa nâng 12 lần) để mọi bản thu có mức tương đương nhau
@@ -1163,7 +1165,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             var np = when {
                 existing != null -> mapTrack(p, existing.id) { it.copy(vocal = clip) }
                 p.tracks.size >= MAX_TRACKS -> p
-                else -> p.copy(tracks = p.tracks + Track(p.nextId, "Vocal", Instrument.VOCAL, volume = 0.9f, vocal = clip), nextId = p.nextId + 1)
+                else -> p.copy(tracks = p.tracks + Track(p.nextId, "Vocal", Instrument.VOCAL, volume = 1.0f, vocal = clip), nextId = p.nextId + 1)
             }
             if (key != null) np = np.copy(keyRoot = key.first, minor = key.second)
             np
@@ -1202,7 +1204,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val clip = vocalClip() ?: return
         val p = project ?: return
         if (vocalBusy || vocalRecording) return
-        val next = clip.copy(denoise = vocalDenoise, tune = vocalTune, tuneStrength = vocalTuneStrength, tuneSpeed = vocalTuneSpeed, tuneChromatic = vocalChromatic)
+        val next = clip.copy(denoise = vocalDenoise, enhance = vocalEnhance, tune = vocalTune, tuneStrength = vocalTuneStrength, tuneSpeed = vocalTuneSpeed, tuneChromatic = vocalChromatic)
         vocalBusy = true
         viewModelScope.launch {
             val x = withContext(Dispatchers.Default) {
@@ -1284,7 +1286,11 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             } else emptyList()
-            commit { cur -> Arranger.arrange(cur, genre, vocalBars, melody) }
+            val activity = withContext(Dispatchers.Default) {
+                val x = vocalSamples
+                if (x == null || clip == null) emptyList() else Arranger.barActivity(x, clip.sampleRate, clip.startMs, p.bpm, Arranger.totalBars(vocalBars))
+            }
+            commit { cur -> Arranger.arrange(cur, genre, vocalBars, melody, activity) }
             vocalBusy = false
             vocalMessage = if (p.followMelody && melody.isEmpty()) "Không dò được giai điệu rõ ràng, piano đệm hợp âm." else null
             cursorTick = 0

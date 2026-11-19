@@ -173,12 +173,69 @@ static void testTimeStretch() {
     CHECK(timeStretch(std::vector<float>(100, 0.1f), kSr, 1.5).size() == 100, "tiny input should pass through");
 }
 
+static double rmsOf(const std::vector<float>& x, size_t a, size_t b) {
+    double s = 0;
+    for (size_t i = a; i < b && i < x.size(); ++i) s += static_cast<double>(x[i]) * x[i];
+    return std::sqrt(s / std::max<size_t>(1, b - a));
+}
+
+// Giọng nhỏ + nền ồn: phải được nâng lên rõ rệt, nền ồn không bị nâng theo, không vượt 1.
+static void testEnhanceQuietVoice() {
+    begin("enhanceVocal: giong nho duoc nang len, nen on khong");
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<float> nd(-1.f, 1.f);
+    std::vector<float> x;
+    const auto v = voice({{220, 1.0}, {262, 1.0}, {196, 1.0}});
+    for (int k = 0; k < kSr; ++k) x.push_back(0.003f * nd(rng));           // 1 s nen on
+    for (float s : v) x.push_back(s * 0.05f + 0.003f * nd(rng));           // giong rat nho (~ -40 dBFS)
+    for (int k = 0; k < kSr; ++k) x.push_back(0.003f * nd(rng));
+    const double voiceBefore = rmsOf(x, kSr + 5000, 3 * kSr);
+    const double noiseBefore = rmsOf(x, 0, kSr / 2);
+    std::vector<float> y = x;
+    enhanceVocal(y, kSr);
+    const double voiceAfter = rmsOf(y, kSr + 5000, 3 * kSr);
+    const double noiseAfter = rmsOf(y, 0, kSr / 2);
+    std::printf("    giong %.4f -> %.4f (x%.1f), nen %.5f -> %.5f\n", voiceBefore, voiceAfter, voiceAfter / voiceBefore, noiseBefore, noiseAfter);
+    CHECK(voiceAfter > voiceBefore * 6.0, "giong chua du to");
+    CHECK(voiceAfter > 0.08, "giong sau khi nang van nho: %.4f", voiceAfter);
+    CHECK(noiseAfter < noiseBefore * 2.5, "nen on bi nang qua nhieu");
+    float peak = 0;
+    for (float s : y) { CHECK(std::isfinite(s), "NaN/Inf"); peak = std::max(peak, std::fabs(s)); }
+    CHECK(peak <= 1.0f, "dinh vuot 1: %.3f", peak);
+}
+
+static void testEnhanceLeavesSilenceAndShortAlone() {
+    begin("enhanceVocal: im lang / qua ngan giu nguyen");
+    std::vector<float> z(kSr, 0.0f);
+    enhanceVocal(z, kSr);
+    for (float s : z) CHECK(s == 0.0f, "im lang bi doi");
+    std::vector<float> shortv(100, 0.1f);
+    const auto copy = shortv;
+    enhanceVocal(shortv, kSr);
+    CHECK(shortv == copy, "doan qua ngan bi doi");
+}
+
+// Giong da to: khong bi nang them nhieu (tranh bom / meo).
+static void testEnhanceKeepsLoudVoiceReasonable() {
+    begin("enhanceVocal: giong da to khong bi day len qua muc");
+    const auto v = voice({{220, 2.0}, {247, 2.0}});
+    std::vector<float> y = v;
+    enhanceVocal(y, kSr);
+    const double a = rmsOf(v, 4000, 4 * kSr), b = rmsOf(y, 4000, 4 * kSr);
+    std::printf("    %.4f -> %.4f\n", a, b);
+    CHECK(b < 0.4, "qua to: %.3f", b);
+    CHECK(b > a * 0.5, "bi giam qua nhieu");
+}
+
 int main() {
     testTrackPitch();
     testEstimateKey();
     testAutoTune();
     testAutoTuneSoftKeepsVibrato();
     testTimeStretch();
+    testEnhanceQuietVoice();
+    testEnhanceLeavesSilenceAndShortAlone();
+    testEnhanceKeepsLoudVoiceReasonable();
     if (gFail) { std::printf("%d CHECK(S) FAILED\n", gFail); return 1; }
     std::printf("ALL %d TESTS PASSED\n", gTests);
     return 0;

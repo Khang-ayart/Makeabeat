@@ -39,4 +39,9 @@ void autoTune(std::vector<float>& x, int sampleRate, const AutoTuneParams& param
 // Dùng để khớp loop với BPM của bài (ratio = BPM gốc / BPM bài). Chạy ngoại tuyến.
 std::vector<float> timeStretch(const std::vector<float>& x, int sampleRate, double ratio);
 
+// Làm rõ giọng thu bằng micro điện thoại (nhỏ, xa, mất chữ): lọc trầm, bớt đục (~300 Hz), nâng độ rõ lời (~3 kHz) và
+// độ thoáng (~7 kHz), rồi cân mức tự động (nâng đoạn nhỏ tới mức mục tiêu, tối đa ~+22 dB, không nâng nền ồn) và chặn đỉnh mềm.
+// Chạy ngoại tuyến, thay đổi x tại chỗ. Bản im lặng / quá ngắn giữ nguyên.
+void enhanceVocal(std::vector<float>& x, int sampleRate);
+
 }  // namespace band

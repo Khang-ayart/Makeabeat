@@ -42,6 +42,7 @@ object AudioEngine {
     /** Nạp / thay bản thu giọng hát vào ô [slot] (>= 300). Gọi từ luồng nền. */
     external fun loadVocal(slot: Int, data: FloatArray, sampleRate: Int): Boolean
     external fun clearVocal(slot: Int): Boolean
+    external fun enhanceVocal(data: FloatArray, sampleRate: Int)
     external fun setVocalBypass(track: Int, bypass: Boolean)
     external fun timeStretch(data: FloatArray, sampleRate: Int, ratio: Double): FloatArray?
     external fun setVocalFx(track: Int, reverb: Float, comp: Float, bright: Float)
