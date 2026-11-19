@@ -18,20 +18,20 @@ object ExportActions {
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        ctx.startActivity(Intent.createChooser(send, "Gửi bản nhạc (YouTube, Drive, Zalo...)").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        ctx.startActivity(Intent.createChooser(send, "Gửi bản nhạc").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    /** Lưu vào Movies/BandStudio (MP4) hoặc Music/BandStudio (WAV). Trả false nếu máy Android < 10 hoặc lỗi. */
-    fun saveToDevice(ctx: Context, file: File, mime: String, video: Boolean): Boolean {
+    /** Lưu vào Music/BandStudio. Trả false nếu máy Android < 10 hoặc lỗi. */
+    fun saveToDevice(ctx: Context, file: File, mime: String): Boolean {
         if (Build.VERSION.SDK_INT < 29) return false
         return try {
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
                 put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, if (video) "Movies/BandStudio" else "Music/BandStudio")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Music/BandStudio")
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
-            val collection = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
             val resolver = ctx.contentResolver
             val uri = resolver.insert(collection, values) ?: return false
             resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: return false

@@ -129,11 +129,11 @@ private fun ExportCard(vm: StudioViewModel) {
     ) {
         Text("Xuất bản nhạc", style = MaterialTheme.typography.titleSmall)
         Text(
-            "MP4 là định dạng đăng thẳng lên YouTube (âm thanh chất lượng cao + ảnh bìa). WAV là bản gốc không nén. Xuất đúng như bạn đang nghe; project vẫn giữ nguyên để chỉnh tiếp.",
+            "M4A nhẹ, dễ gửi; WAV là bản gốc không nén. Cả hai đều dùng được trong mọi app dựng video. Xuất đúng như bạn đang nghe; project vẫn giữ nguyên để chỉnh tiếp.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { saved = null; vm.exportMix(StudioViewModel.ExportKind.MP4) }, enabled = !vm.exporting, modifier = Modifier.weight(1f)) { Text("Xuất MP4 (YouTube)") }
+            Button(onClick = { saved = null; vm.exportMix(StudioViewModel.ExportKind.M4A) }, enabled = !vm.exporting, modifier = Modifier.weight(1f)) { Text("Xuất M4A") }
             OutlinedButton(onClick = { saved = null; vm.exportMix(StudioViewModel.ExportKind.WAV) }, enabled = !vm.exporting, modifier = Modifier.weight(1f)) { Text("Xuất WAV") }
         }
         if (vm.exporting) {
@@ -150,8 +150,8 @@ private fun ExportCard(vm: StudioViewModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { ExportActions.share(ctx, f, kind.mime) }) { Text("Gửi / đăng") }
                 OutlinedButton(onClick = {
-                    val ok = ExportActions.saveToDevice(ctx, f, kind.mime, kind == StudioViewModel.ExportKind.MP4)
-                    saved = if (ok) "Đã lưu vào ${if (kind == StudioViewModel.ExportKind.MP4) "Movies" else "Music"}/BandStudio." else "Máy cũ hoặc lỗi: dùng nút Gửi / đăng để lưu vào Drive hay Zalo."
+                    val ok = ExportActions.saveToDevice(ctx, f, kind.mime)
+                    saved = if (ok) "Đã lưu vào Music/BandStudio." else "Máy cũ hoặc lỗi: dùng nút Gửi / đăng để lưu vào Drive hay Zalo."
                 }) { Text("Lưu vào máy") }
             }
             saved?.let { Text(it, style = MaterialTheme.typography.bodySmall) }

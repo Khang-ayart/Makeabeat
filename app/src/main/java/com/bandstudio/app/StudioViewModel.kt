@@ -1145,7 +1145,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     // Xuất file (WAV / MP4 cho YouTube)
     // =====================================================================================
 
-    enum class ExportKind(val ext: String, val mime: String) { MP4("mp4", "video/mp4"), WAV("wav", "audio/wav") }
+    enum class ExportKind(val ext: String, val mime: String) { M4A("m4a", "audio/mp4"), WAV("wav", "audio/wav") }
 
     var exporting by mutableStateOf(false)
         private set
@@ -1156,7 +1156,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     /** Tệp vừa xuất xong (để chia sẻ / lưu vào máy). */
     var exportedFile by mutableStateOf<File?>(null)
         private set
-    var exportedKind by mutableStateOf(ExportKind.MP4)
+    var exportedKind by mutableStateOf(ExportKind.M4A)
         private set
     var exportMessage by mutableStateOf<String?>(null)
 
@@ -1222,11 +1222,11 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val used = (done * channels).toInt()
                     val trimmed = if (used == pcm.size) pcm else pcm.copyOf(used)
-                    exportStage = if (kind == ExportKind.MP4) "Đang mã hóa MP4 (YouTube)…" else "Đang ghi WAV…"
+                    exportStage = if (kind == ExportKind.M4A) "Đang mã hóa M4A…" else "Đang ghi WAV…"
                     if (kind == ExportKind.WAV) {
                         MixExporter.writeWav(out, trimmed, rate, channels)
                     } else {
-                        MixExporter.writeMp4(out, trimmed, rate, channels, p.name) { exportProgress = 0.3f + 0.7f * it }
+                        MixExporter.writeM4a(out, trimmed, rate, channels) { exportProgress = 0.3f + 0.7f * it }
                     }
                     true
                 } catch (e: Throwable) {
