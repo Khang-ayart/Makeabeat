@@ -108,6 +108,20 @@ JNIEXPORT jboolean JNICALL JNI_FN(clearVocal)(JNIEnv*, jobject, jint id) {
 JNIEXPORT void JNICALL JNI_FN(setVocalFx)(JNIEnv*, jobject, jint track, jfloat reverb, jfloat comp, jfloat bright) {
     if (gEngine) gEngine->core().setVocalFx(track, reverb, comp, bright);
 }
+JNIEXPORT void JNICALL JNI_FN(setVocalBypass)(JNIEnv*, jobject, jint track, jboolean bypass) {
+    if (gEngine) gEngine->core().setVocalBypass(track, bypass == JNI_TRUE);
+}
+// Co/gian thoi gian giu cao do (WSOLA). ratio = do dai moi / do dai cu. Tra ve mang moi.
+JNIEXPORT jfloatArray JNICALL JNI_FN(timeStretch)(JNIEnv* env, jobject, jfloatArray data, jint sampleRate, jdouble ratio) {
+    if (!data) return nullptr;
+    const jsize n = env->GetArrayLength(data);
+    std::vector<float> x(static_cast<size_t>(n));
+    env->GetFloatArrayRegion(data, 0, n, x.data());
+    const std::vector<float> y = band::timeStretch(x, sampleRate, ratio);
+    jfloatArray out = env->NewFloatArray(static_cast<jsize>(y.size()));
+    if (out && !y.empty()) env->SetFloatArrayRegion(out, 0, static_cast<jsize>(y.size()), y.data());
+    return out;
+}
 // Nạp mẫu âm thật (mono float). Có thể gọi từ luồng nền: không dùng hàng đợi lệnh.
 JNIEXPORT jboolean JNICALL JNI_FN(loadSample)(JNIEnv* env, jobject, jint id, jfloatArray data, jint sampleRate) {
     if (!gEngine || !data) return JNI_FALSE;

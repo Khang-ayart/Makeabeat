@@ -42,6 +42,8 @@ object AudioEngine {
     /** Nạp / thay bản thu giọng hát vào ô [slot] (>= 300). Gọi từ luồng nền. */
     external fun loadVocal(slot: Int, data: FloatArray, sampleRate: Int): Boolean
     external fun clearVocal(slot: Int): Boolean
+    external fun setVocalBypass(track: Int, bypass: Boolean)
+    external fun timeStretch(data: FloatArray, sampleRate: Int, ratio: Double): FloatArray?
     external fun setVocalFx(track: Int, reverb: Float, comp: Float, bright: Float)
     /** Lọc ồn tại chỗ; [noiseCount] mẫu đầu là đoạn im lặng để học nhiễu (0 = tự tìm). Chạy trên luồng nền. */
     external fun denoiseVocal(data: FloatArray, sampleRate: Int, strength: Float, noiseCount: Int)

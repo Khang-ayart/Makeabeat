@@ -1,5 +1,7 @@
 package com.bandstudio.app.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -53,7 +55,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.bandstudio.app.StudioViewModel
+import com.bandstudio.app.model.AudioClip
 import com.bandstudio.app.model.BAR_TICKS
+import com.bandstudio.app.model.SECTION_LABELS
 import com.bandstudio.app.model.Catalog
 import com.bandstudio.app.model.Clip
 import com.bandstudio.app.model.DRUM_NAMES
@@ -80,6 +84,8 @@ fun StudioScreen(vm: StudioViewModel) {
     var showGenrePicker by remember { mutableStateOf(false) }
     var trackDialogId by remember { mutableStateOf<Int?>(null) }
     var showRename by remember { mutableStateOf(false) }
+    var pendingAudio by remember { mutableStateOf<android.net.Uri?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) pendingAudio = uri }
 
     Column(
         Modifier
@@ -92,6 +98,11 @@ fun StudioScreen(vm: StudioViewModel) {
             OutlinedButton(onClick = vm::openVocal, modifier = Modifier.weight(1f)) { Text("Vocal: thu giọng") }
             OutlinedButton(onClick = vm::openMixer, modifier = Modifier.weight(1f)) { Text("Mixer & Tạo beat") }
         }
+        OutlinedButton(
+            onClick = { picker.launch(arrayOf("audio/*")) },
+            enabled = !vm.audioBusy,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        ) { Text(if (vm.audioBusy) "Đang nhập…" else "Nhập file âm thanh (MP3, M4A, WAV…)") }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (project.tracks.isEmpty()) {
                 EmptyStudio(onAdd = { showPicker = true })
@@ -100,6 +111,7 @@ fun StudioScreen(vm: StudioViewModel) {
             }
         }
         SelectedClipBar(vm, project)
+        AudioClipBar(vm, project)
         TransportBar(vm, project)
     }
 
@@ -123,6 +135,12 @@ fun StudioScreen(vm: StudioViewModel) {
     trackDialogId?.let { id ->
         val t = project.track(id)
         if (t != null) TrackDialog(vm, t, onClose = { trackDialogId = null }) else trackDialogId = null
+    }
+    pendingAudio?.let { uri ->
+        ImportDialog(
+            onDone = { asVocal, bpm -> vm.importAudio(uri, asVocal, bpm); pendingAudio = null },
+            onCancel = { pendingAudio = null },
+        )
     }
     if (showRename) RenameDialog(project.name, onDone = { vm.renameProject(it); showRename = false }, onCancel = { showRename = false })
 }
@@ -277,6 +295,7 @@ private fun Lane(vm: StudioViewModel, t: Track, barCount: Int, bpm: Int) {
                 detectTapGestures { off ->
                     // Chạm vào chỗ trống: bỏ chọn clip trước, chạm lần nữa mới tạo clip mới.
                     if (t.instrument.isVocal) vm.openVocal()
+                    else if (t.instrument.isAudio) vm.selectedAudio = null
                     else if (vm.selectedClipId != null) vm.selectClip(null) else vm.addClip(t.id, (off.x / barPx).toInt())
                 }
             },
@@ -301,11 +320,39 @@ private fun Lane(vm: StudioViewModel, t: Track, barCount: Int, bpm: Int) {
                 contentAlignment = Alignment.CenterStart,
             ) { Text("Giọng thu", Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.labelMedium, color = Color.Black) }
         }
+        if (t.instrument.isAudio) for (c in t.audio) {
+            val src = vm.project?.source(c.sourceId) ?: continue
+            AudioBlock(c, t, src.name, bars = c.bars(src, bpm), selected = vm.selectedAudio == Pair(t.id, c.id)) {
+                vm.selectedAudio = Pair(t.id, c.id)
+            }
+        }
         for (c in t.clips) {
             ClipBlock(
                 c, t, selected = vm.selectedClipId == c.id,
                 onClick = { if (vm.selectedClipId == c.id) vm.openEditor(t.id, c.id) else vm.selectClip(c.id) },
             )
+        }
+    }
+}
+
+@Composable
+private fun AudioBlock(clip: AudioClip, track: Track, name: String, bars: Int, selected: Boolean, onClick: () -> Unit) {
+    val color = Color(track.instrument.color)
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        Modifier
+            .offset(x = BarW * clip.startBar)
+            .width(BarW * bars)
+            .fillMaxHeight()
+            .padding(2.dp)
+            .clip(shape)
+            .background(color.copy(alpha = if (track.mute) 0.12f else 0.4f))
+            .border(if (selected) 2.dp else 1.dp, if (selected) Color.White else color, shape)
+            .clickable(onClick = onClick),
+    ) {
+        Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
+            if (clip.label.isNotEmpty()) Text(clip.label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -399,6 +446,81 @@ private fun SelectedClipBar(vm: StudioViewModel, project: Project) {
     }
 }
 
+/** Thanh chỉnh clip âm thanh nhập vào: cắt tại đầu phát, nhân bản, dời, cắt đầu / cuối, gắn nhãn phần bài. */
+@Composable
+private fun AudioClipBar(vm: StudioViewModel, project: Project) {
+    val (tid, cid) = vm.selectedAudio ?: run { vm.audioMessage?.let { MessageLine(it) }; return }
+    val track = project.track(tid)
+    val clip = track?.audio?.firstOrNull { it.id == cid }
+    val src = clip?.let { project.source(it.sourceId) }
+    if (track == null || clip == null || src == null) { vm.selectedAudio = null; return }
+    val bar = vm.cursorTick / BAR_TICKS
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+        Column {
+            vm.audioMessage?.let { MessageLine(it) }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    "${src.name} • ô ${clip.startBar + 1}–${clip.endBar(src, project.bpm)}",
+                    style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 6.dp), maxLines = 1,
+                )
+                Button(onClick = { vm.splitSelectedAudio(bar) }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("Cắt ở ô ${bar + 1}") }
+                TextButton(onClick = vm::duplicateSelectedAudio) { Text("Nhân đôi") }
+                TextButton(onClick = { vm.moveSelectedAudio(-1) }) { Text("‹ Lùi") }
+                TextButton(onClick = { vm.moveSelectedAudio(1) }) { Text("Tiến ›") }
+                TextButton(onClick = { vm.trimSelectedAudio(1, false) }) { Text("Cắt đầu 1 ô") }
+                TextButton(onClick = { vm.trimSelectedAudio(1, true) }) { Text("Cắt cuối 1 ô") }
+                OutlinedButton(onClick = {
+                    val next = SECTION_LABELS[(SECTION_LABELS.indexOf(clip.label) + 1) % SECTION_LABELS.size]
+                    vm.labelSelectedAudio(next)
+                }) { Text(if (clip.label.isEmpty()) "Nhãn: —" else "Nhãn: ${clip.label}") }
+                TextButton(onClick = vm::deleteSelectedAudio) { Text("Xóa") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageLine(text: String) {
+    Text(text, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun ImportDialog(onDone: (asVocal: Boolean, srcBpm: Int) -> Unit, onCancel: () -> Unit) {
+    var asVocal by remember { mutableStateOf(false) }
+    var bpmText by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Nhập file âm thanh") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!asVocal) Button(onClick = {}, modifier = Modifier.weight(1f)) { Text("Nhạc / loop") }
+                    else OutlinedButton(onClick = { asVocal = false }, modifier = Modifier.weight(1f)) { Text("Nhạc / loop") }
+                    if (asVocal) Button(onClick = {}, modifier = Modifier.weight(1f)) { Text("Giọng (acapella)") }
+                    else OutlinedButton(onClick = { asVocal = true }, modifier = Modifier.weight(1f)) { Text("Giọng (acapella)") }
+                }
+                if (asVocal) {
+                    Text("Giọng sẽ được lọc ồn / auto-tune như bản thu và dùng để tạo beat.", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    OutlinedTextField(
+                        value = bpmText,
+                        onValueChange = { bpmText = it.filter { c -> c.isDigit() }.take(3) },
+                        label = { Text("BPM của tệp (nếu biết)") },
+                        singleLine = true,
+                    )
+                    Text("Nhập BPM để nhạc tự co giãn theo BPM của bài mà không đổi cao độ. Bỏ trống = giữ nguyên tốc độ.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onDone(asVocal, bpmText.toIntOrNull() ?: 0) }) { Text("Nhập") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Hủy") } },
+    )
+}
+
 @Composable
 private fun TransportBar(vm: StudioViewModel, project: Project) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
@@ -452,7 +574,7 @@ private fun InstrumentPicker(onPick: (Instrument) -> Unit, onDismiss: () -> Unit
         title = { Text("Chọn nhạc cụ") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (pair in Instrument.entries.filter { !it.isVocal }.chunked(2)) {
+                for (pair in Instrument.entries.filter { !it.isVocal && !it.isAudio }.chunked(2)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         for (inst in pair) InstrumentCard(inst, Modifier.weight(1f)) { onPick(inst) }
                     }
@@ -475,6 +597,7 @@ private fun InstrumentCard(inst: Instrument, modifier: Modifier, onClick: () -> 
         Instrument.DRUM_PAD -> "Trống điện tử 808"
         Instrument.LOOPER -> "Pad theo thể loại"
         Instrument.VOCAL -> "Thu giọng hát"
+        Instrument.AUDIO -> "Nhạc nhập vào"
     }
     Column(
         modifier

@@ -23,6 +23,7 @@ import com.bandstudio.app.model.toJson
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -507,10 +508,10 @@ class ModelTest {
         val t = Track(1, "Vocal", Instrument.VOCAL, vocal = vclip(sync = 0, nudge = -100))
         val p = Project("p", "n", tracks = listOf(t))
         val enc = p.encodeForEngine(false, 0, 0, 0).toList()
-        val want = listOf(100, 10_000, VOCAL_SLOT, 100)
-        assertTrue("không thấy nốt giọng $want trong $enc", (0..enc.size - 4).any { enc.subList(it, it + 4) == want })
+        val want = listOf(100, 10_000, VOCAL_SLOT, 100, 0)
+        assertTrue("không thấy nốt giọng $want trong $enc", (0..enc.size - 5).any { enc.subList(it, it + 5) == want })
         val launcher = p.encodeForEngine(false, 0, 0, 0, launcherTrackId = 99).toList()
-        assertFalse((0..launcher.size - 4).any { launcher.subList(it, it + 4) == want })
+        assertFalse((0..launcher.size - 5).any { launcher.subList(it, it + 5) == want })
     }
 
     @Test
@@ -574,5 +575,79 @@ class ModelTest {
         assertEquals(listOf(Arranger.Section.INTRO, Arranger.Section.VERSE, Arranger.Section.VERSE, Arranger.Section.CHORUS, Arranger.Section.CHORUS, Arranger.Section.OUTRO),
             Arranger.sections(6))
         assertTrue(Arranger.totalBars(0) >= 8 && Arranger.totalBars(1000) <= MAX_BARS && Arranger.totalBars(13) % 4 == 0)
+    }
+
+    @Test
+    fun audioClipsAreEncodedWithStretchAndSourceOffset() {
+        val src = com.bandstudio.app.model.AudioSource(1, "loop", "a.wav", 44100, 8000, srcBpm = 120, slot = 305)
+        val clip = com.bandstudio.app.model.AudioClip(1, 1, startBar = 2, srcStartMs = 2000, srcLenMs = 4000)
+        val t = Track(1, "Audio", Instrument.AUDIO, audio = listOf(clip))
+        val p = Project("p", "n", bpm = 60, tracks = listOf(t), sources = listOf(src))
+        // 120 -> 60 BPM: dài gấp đôi. Bắt đầu ô 2 ở 60 BPM = 8000 ms.
+        val want = listOf(8000, 8000, 305, 100, 4000)
+        val enc = p.encodeForEngine(false, 0, 0, 0).toList()
+        assertTrue("không thấy $want trong $enc", (0..enc.size - 5).any { enc.subList(it, it + 5) == want })
+        assertEquals(9, enc[6])  // inst gửi engine = 9 (Vocal)
+        assertEquals(2 + 2, p.endBar)  // 8 s ở 60 BPM = 2 ô, bắt đầu ô 2
+    }
+
+    @Test
+    fun audioSourcesAndClipsSurviveSaveAndLoad() {
+        val src = com.bandstudio.app.model.AudioSource(3, "beat", "b.wav", 48000, 5000, srcBpm = 90, slot = 310)
+        val t = Track(1, "Audio", Instrument.AUDIO, audio = listOf(com.bandstudio.app.model.AudioClip(7, 3, 1, 500, 2500, 0.8f, "Hook")))
+        val p = Project("p", "n", tracks = listOf(t), sources = listOf(src))
+        val back = com.bandstudio.app.model.projectFromJson(org.json.JSONObject(p.toJson().toString()))
+        assertEquals(p, back)
+    }
+
+    private fun audioProject(): Project {
+        val src = com.bandstudio.app.model.AudioSource(1, "loop", "a.wav", 44100, 16_000, srcBpm = 120, slot = 301)
+        val t = Track(1, "Audio", Instrument.AUDIO)
+        return com.bandstudio.app.model.AudioEdit.addClip(Project("p", "n", bpm = 120, tracks = listOf(t), sources = listOf(src), nextId = 10), 1, 1, 0)!!
+    }
+
+    @Test
+    fun audioSplitMoveTrimDuplicateDelete() {
+        val E = com.bandstudio.app.model.AudioEdit
+        var p = audioProject()                       // 16 s ở 120 BPM = 8 ô
+        val c = p.tracks[0].audio[0]
+        assertEquals(8, c.bars(p.source(1)!!, 120))
+        p = E.split(p, 1, c.id, 3)!!                  // 3 ô | 5 ô
+        val (a, b) = p.tracks[0].audio
+        assertEquals(6000, a.srcLenMs); assertEquals(3, b.startBar); assertEquals(6000, b.srcStartMs); assertEquals(10_000, b.srcLenMs)
+        assertNull(E.split(p, 1, a.id, 0)); assertNull(E.split(p, 1, a.id, 3))
+        p = E.move(p, 1, b.id, 2)!!
+        assertEquals(5, p.tracks[0].audio[1].startBar)
+        assertNull(E.move(p, 1, b.id, -9))
+        p = E.trim(p, 1, b.id, 1, fromEnd = false)!!
+        assertEquals(6, p.tracks[0].audio[1].startBar); assertEquals(8000, p.tracks[0].audio[1].srcStartMs)
+        p = E.trim(p, 1, b.id, 1, fromEnd = true)!!
+        assertEquals(6000, p.tracks[0].audio[1].srcLenMs)
+        assertNull(E.trim(p, 1, a.id, 3, fromEnd = true))  // sẽ không còn ô nào
+        p = E.duplicate(p, 1, a.id)!!
+        assertEquals(3, p.tracks[0].audio.size); assertEquals(3, p.tracks[0].audio[2].startBar)
+        p = E.delete(p, 1, a.id)!!
+        assertEquals(2, p.tracks[0].audio.size)
+        assertNull(E.delete(p, 1, 9999))
+    }
+
+    @Test
+    fun audioEditsFollowBpmStretch() {
+        val E = com.bandstudio.app.model.AudioEdit
+        val p0 = audioProject().copy(bpm = 60)        // 120 -> 60 BPM: giãn gấp đôi, vẫn 8 ô
+        val c = p0.tracks[0].audio[0]
+        assertEquals(8, c.bars(p0.source(1)!!, 60))  // loop 8 ô vẫn là 8 ô ở BPM mới
+        val p = E.split(p0, 1, c.id, 4)!!             // 4 ô ở 60 BPM = 16 s phát = 8 s gốc
+        assertEquals(8000, p.tracks[0].audio[0].srcLenMs)
+    }
+
+    @Test
+    fun audioSlotsAreAllocatedWithinRange() {
+        val E = com.bandstudio.app.model.AudioEdit
+        var p = audioProject()
+        assertEquals(302, E.freeSlot(p))
+        val many = (0 until 82).map { com.bandstudio.app.model.AudioSource(100 + it, "x", "x", 44100, 1000, slot = 302 + it) }
+        p = p.copy(sources = p.sources + many)
+        assertNull(E.freeSlot(p))
     }
 }

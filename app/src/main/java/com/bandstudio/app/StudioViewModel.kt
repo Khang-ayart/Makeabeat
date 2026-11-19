@@ -10,6 +10,9 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bandstudio.app.audio.AudioEngine
+import com.bandstudio.app.audio.AudioDecoder
+import com.bandstudio.app.model.AudioEdit
+import com.bandstudio.app.model.AudioSource
 import com.bandstudio.app.audio.MixExporter
 import com.bandstudio.app.audio.VocalRecorder
 import com.bandstudio.app.model.Arranger
@@ -145,6 +148,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             val muteForTake = vocalRecording && t?.instrument?.isVocal == true  // đang thu đè: không phát lại giọng cũ
             AudioEngine.setTrackMix(i, t?.volume ?: 0.8f, t?.pan ?: 0f, (t?.mute ?: false) || muteForTake, t?.solo ?: false)
             t?.vocal?.let { AudioEngine.setVocalFx(i, it.reverb, it.comp, it.bright) }
+            AudioEngine.setVocalBypass(i, t?.instrument?.isAudio == true)  // nhạc nhập vào: không qua chuỗi xử lý giọng
         }
     }
 
@@ -231,6 +235,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         val bpm = value.coerceIn(40, 240)
         update { it.copy(bpm = bpm) }
         AudioEngine.setBpm(bpm.toFloat())
+        restretchAudioSoon()
     }
 
     /** Ứng dụng xuống nền: dừng phát, lưu ngay, engine sẽ bị đóng. */
@@ -272,6 +277,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         screen = Screen.Studio
         syncEngine()
         loadVocalFromProject()
+        loadAudioFromProject()
     }
 
     fun closeProject() {
@@ -814,6 +820,147 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // =====================================================================================
+    // Audio nhập vào: nhạc / loop / acapella, cắt, dời, sắp xếp
+    // =====================================================================================
+
+    private val audioDir = File(app.filesDir, "audio")
+    private val audioCache = HashMap<Int, FloatArray>()  // id nguồn -> mẫu gốc (mono)
+    private var restretchJob: kotlinx.coroutines.Job? = null
+
+    var audioBusy by mutableStateOf(false)
+        private set
+    var audioMessage by mutableStateOf<String?>(null)
+    var selectedAudio by mutableStateOf<Pair<Int, Int>?>(null)  // (trackId, clipId)
+
+    /** [asVocal]: giọng hát (acapella) đi qua lọc ồn / auto-tune như bản thu; ngược lại là nhạc / loop. [srcBpm] > 0: co giãn theo BPM bài. */
+    fun importAudio(uri: android.net.Uri, asVocal: Boolean, srcBpm: Int) {
+        val p0 = project ?: return
+        if (audioBusy || exporting) return
+        if (asVocal && vocalTrackId() == null && p0.tracks.size >= MAX_TRACKS) { audioMessage = "Đã đủ $MAX_TRACKS track, xóa bớt một track trước."; return }
+        if (!asVocal && AudioEdit.freeSlot(p0) == null) { audioMessage = "Đã nhập quá nhiều tệp trong bài này."; return }
+        audioBusy = true
+        audioMessage = "Đang đọc tệp…"
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            val dec = withContext(Dispatchers.Default) { try { AudioDecoder.decode(ctx, uri) } catch (e: Exception) { null } }
+            val name = withContext(Dispatchers.IO) { AudioDecoder.displayName(ctx, uri) }
+            if (dec == null) {
+                audioMessage = "Không đọc được tệp này. Thử MP3, M4A, WAV hoặc OGG."
+            } else if (asVocal) {
+                val prev = vocalClip()
+                val id = System.currentTimeMillis().toString(36)
+                val clip = VocalClip(
+                    rawFile = "$id-raw.wav", file = "$id.wav", sampleRate = dec.sampleRate,
+                    lengthMs = (dec.samples.size * 1000L / dec.sampleRate).toInt(), syncMs = 0,
+                    denoise = vocalDenoise, tune = vocalTune, tuneStrength = vocalTuneStrength,
+                    tuneSpeed = vocalTuneSpeed, tuneChromatic = vocalChromatic,
+                    reverb = prev?.reverb ?: 0.22f, comp = prev?.comp ?: 0.6f, bright = prev?.bright ?: 0.4f, gain = prev?.gain ?: 1.0f,
+                )
+                processNewVocal(clip, dec.samples, prev, "Đã nhập giọng.")
+                audioMessage = null
+            } else {
+                importMusic(name, dec, srcBpm)
+            }
+            audioBusy = false
+        }
+    }
+
+    private suspend fun importMusic(name: String, dec: com.bandstudio.app.model.WavData, srcBpm: Int) {
+        val p = project ?: return
+        val slot = AudioEdit.freeSlot(p) ?: return
+        val sid = p.nextId
+        val lengthMs = (dec.samples.size * 1000L / dec.sampleRate).toInt()
+        val src = AudioSource(sid, name, "src$sid-${System.currentTimeMillis().toString(36)}.wav", dec.sampleRate, lengthMs, srcBpm.coerceIn(0, 240), slot)
+        withContext(Dispatchers.Default) {
+            audioDir.mkdirs()
+            File(audioDir, src.file).writeBytes(Wav.encode16(dec.samples, dec.sampleRate))
+            audioCache[sid] = dec.samples
+            pushAudioSource(src, if (p.endBar == 0 && srcBpm > 0) srcBpm else p.bpm)
+        }
+        var added = false
+        commit { cur ->
+            var np = cur.copy(sources = cur.sources + src, nextId = cur.nextId + 1)
+            if (cur.endBar == 0 && src.srcBpm > 0) np = np.copy(bpm = src.srcBpm.coerceIn(40, 240))  // bài còn trống: lấy BPM của tệp
+            val existing = np.tracks.firstOrNull { it.instrument.isAudio }?.id
+            val trackId: Int
+            if (np.tracks.size < MAX_TRACKS) {
+                trackId = np.nextId
+                np = np.copy(tracks = np.tracks + Track(trackId, name, Instrument.AUDIO, volume = 0.85f), nextId = np.nextId + 1)
+            } else if (existing != null) trackId = existing else return@commit cur
+            val maxMs = (MAX_BARS * AudioEdit.srcMsPerBar(src, np.bpm)).toInt()
+            val withClip = AudioEdit.addClip(np, trackId, src.id, 0, 0, minOf(lengthMs, maxMs))
+            if (withClip == null) cur else { added = true; selectedAudio = Pair(trackId, withClip.nextId - 1); withClip }
+        }
+        audioMessage = if (added) "Đã thêm \"$name\"." + if (src.srcBpm == 0) " Chưa biết BPM gốc nên giữ nguyên tốc độ." else "" else "Không thêm được tệp."
+    }
+
+    /** Nạp (hoặc nạp lại sau khi đổi BPM) một nguồn vào ô mẫu của engine, co giãn theo BPM bài nếu biết BPM gốc. Luồng nền. */
+    private fun pushAudioSource(src: AudioSource, bpm: Int) {
+        val x = audioCache[src.id] ?: run {
+            val f = File(audioDir, src.file)
+            val w = if (f.exists()) Wav.parse(f.readBytes()) else null
+            w?.samples?.also { audioCache[src.id] = it }
+        } ?: return
+        val ratio = src.ratio(bpm)
+        val y = if (kotlin.math.abs(ratio - 1.0) < 0.002) x else AudioEngine.timeStretch(x, src.sampleRate, ratio) ?: x
+        AudioEngine.loadVocal(src.slot, y, src.sampleRate)
+    }
+
+    private fun loadAudioFromProject() {
+        val p = project ?: return
+        if (p.sources.isEmpty()) return
+        viewModelScope.launch(Dispatchers.Default) {
+            for (s in p.sources) try { pushAudioSource(s, p.bpm) } catch (e: Exception) { /* thiếu tệp: bỏ qua */ }
+        }
+    }
+
+    /** Đổi BPM liên tục khi kéo thanh trượt: đợi dừng tay rồi mới co giãn lại. */
+    private fun restretchAudioSoon() {
+        val p = project ?: return
+        if (p.sources.none { it.srcBpm > 0 }) return
+        restretchJob?.cancel()
+        restretchJob = viewModelScope.launch(Dispatchers.Default) {
+            kotlinx.coroutines.delay(450)
+            val cur = project ?: return@launch
+            for (s in cur.sources) if (s.srcBpm > 0) try { pushAudioSource(s, cur.bpm) } catch (e: Exception) { }
+        }
+    }
+
+    /** Đặt BPM gốc của một nguồn (0 = không co giãn). */
+    fun setSourceBpm(sourceId: Int, srcBpm: Int) {
+        commit { p -> p.copy(sources = p.sources.map { if (it.id == sourceId) it.copy(srcBpm = srcBpm.coerceIn(0, 240)) else it }) }
+        restretchAudioSoon()
+    }
+
+    private fun editAudio(f: (Project, Int, Int) -> Project?) {
+        val (tid, cid) = selectedAudio ?: return
+        commit { p -> f(p, tid, cid) ?: p }
+    }
+
+    /** Cắt clip đang chọn tại ô [bar] (thường là vị trí đầu phát). */
+    fun splitSelectedAudio(bar: Int) {
+        val (tid, cid) = selectedAudio ?: return
+        val p = project ?: return
+        val r = AudioEdit.split(p, tid, cid, bar)
+        if (r == null) { audioMessage = "Đặt đầu phát vào bên trong clip (không phải đầu clip) rồi cắt."; return }
+        commit { AudioEdit.split(it, tid, cid, bar) ?: it }
+        audioMessage = null
+    }
+    fun duplicateSelectedAudio() {
+        val (tid, cid) = selectedAudio ?: return
+        if (project?.let { AudioEdit.duplicate(it, tid, cid) } == null) { audioMessage = "Không đủ chỗ để nhân bản."; return }
+        editAudio { p, t, c -> AudioEdit.duplicate(p, t, c) }
+    }
+    fun deleteSelectedAudio() {
+        editAudio { p, t, c -> AudioEdit.delete(p, t, c) }
+        selectedAudio = null
+    }
+    fun moveSelectedAudio(delta: Int) = editAudio { p, t, c -> AudioEdit.move(p, t, c, delta) }
+    fun trimSelectedAudio(bars: Int, fromEnd: Boolean) = editAudio { p, t, c -> AudioEdit.trim(p, t, c, bars, fromEnd) }
+    fun labelSelectedAudio(label: String) = editAudio { p, t, c -> AudioEdit.setLabel(p, t, c, label) }
+    fun gainSelectedAudio(g: Float) = update { p -> selectedAudio?.let { (t, c) -> AudioEdit.setGain(p, t, c, g) } ?: p }
+
+    // =====================================================================================
     // Vocal: thu âm, lọc ồn, auto-tune, nghe lại
     // =====================================================================================
 
@@ -948,6 +1095,11 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             tuneStrength = vocalTuneStrength, tuneSpeed = vocalTuneSpeed, tuneChromatic = vocalChromatic,
             reverb = prev?.reverb ?: 0.22f, comp = prev?.comp ?: 0.6f, bright = prev?.bright ?: 0.4f, gain = prev?.gain ?: 1.0f,
         )
+        processNewVocal(clip, data, prev, "Đã thu xong.")
+    }
+
+    /** Lưu bản gốc, lọc ồn / auto-tune / chuẩn hóa, dò tông, đưa vào track Vocal và nạp engine (dùng cho thu âm và nhập acapella). */
+    private fun processNewVocal(clip: VocalClip, data: FloatArray, prev: VocalClip?, doneText: String) {
         vocalBusy = true
         viewModelScope.launch {
             val result = withContext(Dispatchers.Default) {
@@ -964,7 +1116,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             if (result == null || result.first == null) {
-                vocalMessage = "Xử lý bản thu thất bại. Thử thu lại."
+                vocalMessage = "Xử lý âm thanh thất bại. Thử lại nhé."
             } else {
                 val k = result.second
                 val confident = k.size >= 4 && k[2] >= 450 && k[3] >= 2000
@@ -975,7 +1127,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.Default) { pushVocalToEngine(clip) }
                 val old = prev
                 if (old != null) { File(vocalDir, old.rawFile).delete(); File(vocalDir, old.file).delete() }
-                vocalMessage = if (confident) "Đã thu xong. Tông đoán được: $detectedKey" else "Đã thu xong."
+                vocalMessage = if (confident) "$doneText Tông đoán được: $detectedKey" else doneText
             }
             vocalBusy = false
         }

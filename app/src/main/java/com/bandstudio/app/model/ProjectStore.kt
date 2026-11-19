@@ -15,6 +15,12 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
     put("minor", minor)
     put("arrGenre", arrangeGenre)
     put("follow", followMelody)
+    put("sources", JSONArray().also { a ->
+        for (x in sources) a.put(JSONObject().apply {
+            put("id", x.id); put("name", x.name); put("file", x.file); put("rate", x.sampleRate)
+            put("len", x.lengthMs); put("bpm", x.srcBpm); put("slot", x.slot)
+        })
+    })
     put("tracks", JSONArray().also { arr ->
         for (t in tracks) arr.put(JSONObject().apply {
             put("id", t.id)
@@ -34,6 +40,12 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
                     put("reverb", v.reverb.toDouble()); put("comp", v.comp.toDouble()); put("bright", v.bright.toDouble()); put("gain", v.gain.toDouble())
                 })
             }
+            if (t.audio.isNotEmpty()) put("audio", JSONArray().also { a ->
+                for (c in t.audio) a.put(JSONObject().apply {
+                    put("id", c.id); put("src", c.sourceId); put("bar", c.startBar)
+                    put("from", c.srcStartMs); put("len", c.srcLenMs); put("gain", c.gain.toDouble()); put("label", c.label)
+                })
+            })
             if (t.instrument.isLooper) {
                 put("genre", t.genreId)
                 put("key", t.keyRoot)
@@ -89,6 +101,16 @@ fun projectFromJson(o: JSONObject): Project {
                 bright = it.optDouble("bright", 0.4).toFloat().coerceIn(0f, 1f), gain = it.optDouble("gain", 1.0).toFloat().coerceIn(0.1f, 1.5f),
             )
         }
+        val audio = ArrayList<AudioClip>()
+        val aa = t.optJSONArray("audio") ?: JSONArray()
+        for (j in 0 until minOf(aa.length(), MAX_AUDIO_CLIPS)) {
+            val c = aa.getJSONObject(j)
+            audio.add(AudioClip(
+                c.getInt("id"), c.getInt("src"), c.optInt("bar", 0).coerceIn(0, MAX_BARS - 1),
+                c.optInt("from", 0).coerceAtLeast(0), c.optInt("len", 0).coerceAtLeast(0),
+                c.optDouble("gain", 1.0).toFloat().coerceIn(0.1f, 1.5f), c.optString("label", ""),
+            ))
+        }
         tracks.add(
             Track(
                 id = t.getInt("id"),
@@ -103,11 +125,23 @@ fun projectFromJson(o: JSONObject): Project {
                 kit = kit,
                 keyRoot = Math.floorMod(t.optInt("key", DEFAULT_KEY), 12),
                 vocal = vocal,
+                audio = audio,
                 auto = t.optBoolean("auto", false),
             ),
         )
     }
+    val sources = ArrayList<AudioSource>()
+    val sa = o.optJSONArray("sources") ?: JSONArray()
+    for (i in 0 until sa.length()) {
+        val x = sa.getJSONObject(i)
+        sources.add(AudioSource(
+            x.getInt("id"), x.optString("name", "Audio"), x.optString("file", ""),
+            x.optInt("rate", 44100).coerceIn(8000, 192000), x.optInt("len", 0).coerceAtLeast(0),
+            x.optInt("bpm", 0).coerceIn(0, 240), x.optInt("slot", FIRST_AUDIO_SLOT).coerceIn(FIRST_AUDIO_SLOT, LAST_AUDIO_SLOT),
+        ))
+    }
     return Project(
+        sources = sources,
         id = o.getString("id"),
         name = o.optString("name", "Bản nhạc"),
         bpm = o.optInt("bpm", 100).coerceIn(40, 240),

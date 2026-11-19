@@ -28,10 +28,15 @@ enum class Instrument(
     DRUM_KIT(4, "Drum Kit", true, 0xFF2FBF8F, 0, 0),
     DRUM_PAD(5, "Drum Pad", true, 0xFF1FB5D4, 0, 0),
     LOOPER(6, "Looper", false, 0xFFE0568F, 0, 0),
-    VOCAL(9, "Vocal", false, 0xFFFFD166, 60, 60);
+    VOCAL(9, "Vocal", false, 0xFFFFD166, 60, 60),
+    AUDIO(10, "Audio", false, 0xFF8AD1C2, 60, 60);
 
     val isLooper: Boolean get() = this == LOOPER
     val isVocal: Boolean get() = this == VOCAL
+    val isAudio: Boolean get() = this == AUDIO
+
+    /** Id trong engine C++: track Audio dùng chung bộ phát clip của Vocal (id 9). */
+    val engineId: Int get() = if (this == AUDIO) VOCAL.id else id
 
     /** Nhạc cụ bấm là phát một tiếng ngắn (trống, pad Looper): lưới 1/16, không có nốt kéo dài. */
     val oneShot: Boolean get() = isDrum || isLooper
@@ -101,6 +106,44 @@ data class VocalClip(
     fun bars(bpm: Int): Int = Math.ceil((offsetMs + playMs) / 1000.0 * bpm / 240.0).toInt()
 }
 
+/** Tệp âm thanh nhập vào (WAV mono đã giải mã trong thư mục audio của dự án). [srcBpm] > 0: co/giãn theo BPM bài. */
+data class AudioSource(
+    val id: Int,
+    val name: String,
+    val file: String,
+    val sampleRate: Int,
+    val lengthMs: Int,
+    val srcBpm: Int = 0,
+    /** Ô mẫu trong engine (301..383). */
+    val slot: Int = VOCAL_SLOT + 1,
+) {
+    /** Hệ số độ dài khi chuyển sang BPM [bpm] (srcBpm / bpm; 1 nếu không biết BPM gốc). */
+    fun ratio(bpm: Int): Double = if (srcBpm > 0) (srcBpm.toDouble() / bpm).coerceIn(0.5, 2.0) else 1.0
+}
+
+const val MAX_AUDIO_CLIPS = 32
+const val FIRST_AUDIO_SLOT = VOCAL_SLOT + 1
+const val LAST_AUDIO_SLOT = 383
+
+/** Một đoạn của tệp nhập vào đặt trên timeline: bắt đầu ở ô [startBar], lấy [srcLenMs] từ [srcStartMs] của tệp gốc. */
+data class AudioClip(
+    val id: Int,
+    val sourceId: Int,
+    val startBar: Int,
+    val srcStartMs: Int,
+    val srcLenMs: Int,
+    val gain: Float = 1.0f,
+    /** Nhãn phần bài: Intro, Verse, Pre-chorus, Hook, Bridge, Outro (rỗng = không nhãn). */
+    val label: String = "",
+) {
+    fun playMs(src: AudioSource, bpm: Int): Int = (srcLenMs * src.ratio(bpm)).toInt()
+    fun startMs(bpm: Int): Int = (startBar * 240000.0 / bpm).toInt()
+    fun bars(src: AudioSource, bpm: Int): Int = Math.ceil(playMs(src, bpm) / 1000.0 * bpm / 240.0).toInt().coerceAtLeast(1)
+    fun endBar(src: AudioSource, bpm: Int): Int = startBar + bars(src, bpm)
+}
+
+val SECTION_LABELS = listOf("", "Intro", "Verse", "Pre-chorus", "Hook", "Bridge", "Outro")
+
 data class Track(
     val id: Int,
     val name: String,
@@ -117,6 +160,8 @@ data class Track(
     val keyRoot: Int = DEFAULT_KEY,
     /** Chỉ track Vocal: bản thu. */
     val vocal: VocalClip? = null,
+    /** Chỉ track Audio: các đoạn nhạc nhập vào. */
+    val audio: List<AudioClip> = emptyList(),
     /** Track do "Tạo beat" sinh ra (được thay khi tạo lại, không đụng tới track của người dùng). */
     val auto: Boolean = false,
 ) {
@@ -140,9 +185,14 @@ data class Project(
     val arrangeGenre: String = "hiphop",
     /** true: nhạc cụ đánh theo nốt giọng hát (melodic/pop); false: chỉ đệm hợp âm (rap). */
     val followMelody: Boolean = false,
+    /** Các tệp âm thanh nhập vào (dùng chung giữa các clip). */
+    val sources: List<AudioSource> = emptyList(),
 ) {
+    fun source(id: Int): AudioSource? = sources.firstOrNull { it.id == id }
+    fun audioEndBar(t: Track): Int = t.audio.maxOfOrNull { c -> source(c.sourceId)?.let { c.endBar(it, bpm) } ?: 0 } ?: 0
+
     /** Ô nhịp cuối cùng có nhạc hoặc giọng (0 nếu chưa có gì). */
-    val endBar: Int get() = tracks.maxOfOrNull { t -> maxOf(t.clips.maxOfOrNull { it.endBar } ?: 0, t.vocal?.bars(bpm) ?: 0) } ?: 0
+    val endBar: Int get() = tracks.maxOfOrNull { t -> maxOf(t.clips.maxOfOrNull { it.endBar } ?: 0, t.vocal?.bars(bpm) ?: 0, audioEndBar(t)) } ?: 0
 
     fun track(id: Int): Track? = tracks.firstOrNull { it.id == id }
     fun trackIndex(id: Int): Int = tracks.indexOfFirst { it.id == id }
@@ -174,7 +224,19 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
             flat.add(vocal.playMs)
             flat.add(VOCAL_SLOT)
             flat.add((vocal.gain * 100f).toInt().coerceIn(1, 127))
+            flat.add(0)  // src: vào từ đầu bản thu
             count++
+        }
+        if (launcherTrackId == null && t.instrument.isAudio) {  // mỗi đoạn: (bắt đầu ms, dài ms, ô mẫu, độ to, điểm vào ms)
+            for (c in t.audio.take(MAX_AUDIO_CLIPS)) {
+                val src = source(c.sourceId) ?: continue
+                val play = c.playMs(src, bpm)
+                if (play <= 0) continue
+                flat.add(c.startMs(bpm)); flat.add(play); flat.add(src.slot)
+                flat.add((c.gain * 100f).toInt().coerceIn(1, 127))
+                flat.add((c.srcStartMs * src.ratio(bpm)).toInt())
+                count++
+            }
         }
         for (c in if (launcherTrackId != null) emptyList() else t.clips) {
             val base = c.startBar * BAR_TICKS
@@ -188,7 +250,7 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
                 count++
             }
         }
-        out.add(t.instrument.id)
+        out.add(t.instrument.engineId)
         val kit = if (t.instrument.isLooper) t.kit.take(KIT_COUNT) else emptyList()
         // Kit gửi sang engine = 20 âm + 12 âm bass trượt (nốt trượt của hàng Bass trỏ tới các ô 20..31).
         val slides = if (kit.size == KIT_COUNT) Catalog.slidePatches(kit) else emptyList()
