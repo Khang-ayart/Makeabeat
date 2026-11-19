@@ -86,6 +86,7 @@ constexpr int kMaxSamples = 384;
 // Ô mẫu dành cho giọng hát (thay được nhiều lần): [kVocalSlotBase, kMaxSamples).
 constexpr int kVocalSlotBase = 300;
 constexpr int kMaxVocalSeconds = 360;
+constexpr int kMaxAudioClips = 32;  // số clip phát được cùng lúc xét trên mỗi track audio
 // Vùng phát của nhạc cụ có cao độ (piano, bass, guitar): mẫu gốc ở nốt root, dùng cho nốt [lo, hi] và velocity [velLo, velHi].
 constexpr int kMaxZones = 96;
 struct Zone {
@@ -103,6 +104,7 @@ struct Note {
     int32_t dur;    // độ dài (tick)
     uint16_t pitch;   // Looper: mã nốt như PadHit::kitIdx
     uint8_t vel;
+    int32_t src = 0;  // chỉ track Vocal/Audio: điểm vào trong bản thu (ms, theo mẫu đã nạp)
 };
 
 struct TrackData {

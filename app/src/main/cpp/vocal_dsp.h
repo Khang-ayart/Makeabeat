@@ -35,4 +35,8 @@ struct AutoTuneParams {
 // Phần không có cao độ (hơi thở, phụ âm) giữ nguyên. Với strength = 0 đầu ra bằng đầu vào.
 void autoTune(std::vector<float>& x, int sampleRate, const AutoTuneParams& params);
 
+// Co giãn thời gian không đổi cao độ (WSOLA): trả bản dài ratio x bản gốc (ratio > 1 chậm hơn, giới hạn 0,5..2).
+// Dùng để khớp loop với BPM của bài (ratio = BPM gốc / BPM bài). Chạy ngoại tuyến.
+std::vector<float> timeStretch(const std::vector<float>& x, int sampleRate, double ratio);
+
 }  // namespace band

@@ -315,4 +315,71 @@ void autoTune(std::vector<float>& x, int sr, const AutoTuneParams& p) {
     for (size_t i = 0; i < x.size(); ++i) x[i] = x[i] * (1.0f - mask[i]) + y[i] * mask[i];
 }
 
+std::vector<float> timeStretch(const std::vector<float>& x, int sr, double ratio) {
+    ratio = std::clamp(ratio, 0.5, 2.0);
+    if (x.size() < 4096 || std::fabs(ratio - 1.0) < 1e-3) return x;
+    const int N = std::max(512, static_cast<int>(0.04 * sr) / 2 * 2);  // cửa sổ ~40 ms
+    const int Hs = N / 2;                                               // bước tổng hợp (Hann, chồng 50% -> tổng = 1)
+    const double Ha = Hs / ratio;                                       // bước phân tích danh nghĩa
+    const int tol = Hs / 2;                                             // dò lệch tối đa +-
+    const size_t outLen = static_cast<size_t>(static_cast<double>(x.size()) * ratio);
+    std::vector<float> y(outLen + static_cast<size_t>(N), 0.0f);
+    std::vector<float> win(static_cast<size_t>(N));
+    for (int i = 0; i < N; ++i) win[static_cast<size_t>(i)] = 0.5f - 0.5f * std::cos(static_cast<float>(2.0 * kPi * (i + 0.5) / N));
+    const std::vector<float> lo = decimate(x);
+    const long nlo = static_cast<long>(lo.size());
+    const int Nlo = N / kDecim;
+    long prev = 0;      // vị trí nguồn đã chọn cho khung trước
+    bool first = true;
+    for (size_t k = 0;; ++k) {
+        const long outPos = static_cast<long>(k) * Hs;
+        if (outPos >= static_cast<long>(outLen)) break;
+        long pos = static_cast<long>(std::llround(static_cast<double>(k) * Ha));
+        if (!first) {
+            // Chọn lệch để đoạn mới nối liền mạch nhất với đoạn "tiếp theo tự nhiên" của khung trước (tương quan ở tốc độ đã giảm).
+            const long ref = (prev + Hs) / kDecim;
+            long best = pos, bestScore = 0;
+            double bs = -1e300;
+            const long c0 = pos / kDecim;
+            for (long o = -tol / kDecim; o <= tol / kDecim; ++o) {
+                const long a = c0 + o;
+                if (a < 0 || a + Nlo >= nlo || ref < 0 || ref + Nlo >= nlo) continue;
+                double dot = 0, na = 0;
+                for (int j = 0; j < Nlo; j += 2) {
+                    dot += static_cast<double>(lo[static_cast<size_t>(ref + j)]) * lo[static_cast<size_t>(a + j)];
+                    na += static_cast<double>(lo[static_cast<size_t>(a + j)]) * lo[static_cast<size_t>(a + j)];
+                }
+                const double score = dot / std::sqrt(na + 1e-9);
+                if (score > bs) { bs = score; bestScore = o; }
+            }
+            best = (c0 + bestScore) * kDecim;
+            // tinh chỉnh ở tốc độ gốc quanh vị trí đã chọn
+            const long refFull = prev + Hs;
+            double bs2 = -1e300;
+            long best2 = best;
+            for (long o = -kDecim; o <= kDecim; ++o) {
+                const long a = best + o;
+                if (a < 0 || a + N >= static_cast<long>(x.size()) || refFull < 0 || refFull + N >= static_cast<long>(x.size())) continue;
+                double dot = 0, na = 0;
+                for (int j = 0; j < N; j += 4) {
+                    dot += static_cast<double>(x[static_cast<size_t>(refFull + j)]) * x[static_cast<size_t>(a + j)];
+                    na += static_cast<double>(x[static_cast<size_t>(a + j)]) * x[static_cast<size_t>(a + j)];
+                }
+                const double score = dot / std::sqrt(na + 1e-9);
+                if (score > bs2) { bs2 = score; best2 = a; }
+            }
+            pos = best2;
+        }
+        first = false;
+        prev = pos;
+        for (int j = 0; j < N; ++j) {
+            const long src = pos + j;
+            if (src < 0 || src >= static_cast<long>(x.size())) break;
+            y[static_cast<size_t>(outPos + j)] += x[static_cast<size_t>(src)] * win[static_cast<size_t>(j)];
+        }
+    }
+    y.resize(outLen);
+    return y;
+}
+
 }  // namespace band

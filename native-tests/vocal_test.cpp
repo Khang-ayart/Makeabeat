@@ -152,11 +152,33 @@ static void testAutoTuneSoftKeepsVibrato() {
     CHECK(c > 0.25 * c0 && c < 0.75 * c0, "soft tune moved %.1f of %.1f cents", c, c0);
 }
 
+static void testTimeStretch() {
+    begin("Co giãn thời gian: độ dài đúng tỉ lệ, cao độ giữ nguyên, biên độ giữ, ratio 1 giữ nguyên");
+    const auto x = voice({{220.0, 3.0}});
+    CHECK(timeStretch(x, kSr, 1.0) == x, "ratio 1 must return the input");
+    for (double r : {0.8, 1.25, 1.5}) {
+        const auto y = timeStretch(x, kSr, r);
+        CHECK(std::fabs(static_cast<double>(y.size()) / x.size() - r) < 0.01, "len ratio %f for %f", static_cast<double>(y.size()) / x.size(), r);
+        const double m = medianHz(trackPitch(y, kSr), 20, trackPitch(y, kSr).size() - 20);
+        CHECK(std::fabs(cents(m, 220.0)) < 25.0, "pitch %.2f after stretch %.2f", m, r);
+        double e0 = 0, e1 = 0;
+        for (size_t i = 5000; i + 5000 < x.size(); ++i) e0 += x[i] * x[i];
+        for (size_t i = 5000; i + 5000 < y.size(); ++i) e1 += y[i] * y[i];
+        e0 /= (x.size() - 10000); e1 /= (y.size() - 10000);
+        CHECK(e1 > 0.6 * e0 && e1 < 1.6 * e0, "power changed x%.2f at ratio %.2f", e1 / e0, r);
+        bool ok = true;
+        for (float v : y) ok = ok && std::isfinite(v) && std::fabs(v) < 2.0f;
+        CHECK(ok, "invalid samples");
+    }
+    CHECK(timeStretch(std::vector<float>(100, 0.1f), kSr, 1.5).size() == 100, "tiny input should pass through");
+}
+
 int main() {
     testTrackPitch();
     testEstimateKey();
     testAutoTune();
     testAutoTuneSoftKeepsVibrato();
+    testTimeStretch();
     if (gFail) { std::printf("%d CHECK(S) FAILED\n", gFail); return 1; }
     std::printf("ALL %d TESTS PASSED\n", gTests);
     return 0;

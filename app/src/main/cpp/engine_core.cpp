@@ -93,9 +93,10 @@ Song* decodeSong(const int32_t* d, int n) {
                              [](const PadHit& a, const PadHit& b) { return a.start < b.start; });
         }
         const int count = d[i++];
-        if (count < 0 || static_cast<int64_t>(i) + 4LL * count > n) return nullptr;
+        const int stride = td.inst == Inst::Vocal ? 5 : 4;  // clip audio có thêm điểm vào (src)
+        if (count < 0 || static_cast<int64_t>(i) + static_cast<int64_t>(stride) * count > n) return nullptr;
         td.notes.reserve(static_cast<size_t>(count));
-        for (int k = 0; k < count; ++k, i += 4) {
+        for (int k = 0; k < count; ++k, i += stride) {
             Note nt;
             nt.start = std::max(0, d[i]);
             nt.dur = std::max(1, d[i + 1]);
@@ -103,6 +104,7 @@ Song* decodeSong(const int32_t* d, int n) {
             nt.pitch = static_cast<uint16_t>(std::clamp(d[i + 2], 0, td.inst == Inst::Looper ? kMaxNoteCode - 1
                                                             : td.inst == Inst::Vocal ? kMaxSamples - 1 : 127));
             nt.vel = static_cast<uint8_t>(std::clamp(d[i + 3], 1, 127));
+            if (td.inst == Inst::Vocal) nt.src = std::max(0, d[i + 4]);
             td.notes.push_back(nt);
         }
         std::stable_sort(td.notes.begin(), td.notes.end(),
@@ -221,6 +223,10 @@ bool EngineCore::clearVocal(int id) {
     return true;
 }
 
+void EngineCore::setVocalBypass(int track, bool bypass) noexcept {
+    if (track >= 0 && track < kMaxTracks) vocal_[track].bypass.store(bypass, std::memory_order_relaxed);
+}
+
 void EngineCore::setVocalFx(int track, float reverb, float comp, float bright) noexcept {
     if (track < 0 || track >= kMaxTracks) return;
     vocal_[track].reverb.store(std::clamp(reverb, 0.0f, 1.0f), std::memory_order_relaxed);
@@ -228,29 +234,36 @@ void EngineCore::setVocalFx(int track, float reverb, float comp, float bright) n
     vocal_[track].bright.store(std::clamp(bright, 0.0f, 1.0f), std::memory_order_relaxed);
 }
 
-// Giọng hát: vị trí trong bản thu = (phách * 60 / BPM) - độ trễ bắt đầu, nên giọng luôn theo giây thực, dù seek / lặp / đổi BPM.
-// Nốt của track: start = độ trễ (ms), dur = độ dài (ms), pitch = ô mẫu, vel = độ to (100 = nguyên bản).
+// Track audio (giọng hát và file nhập): mỗi "nốt" là một clip = (độ trễ ms, độ dài ms, ô mẫu, độ to, điểm vào ms).
+// Vị trí trong mẫu = (phách * 60 / BPM) - độ trễ + điểm vào, nên clip luôn theo giây thực dù seek / lặp / đổi BPM.
 float EngineCore::renderVocal(int track, double beat, float secPerBeat, float& send) noexcept {
     const TrackData& td = current_->tracks[track];
     if (td.inst != Inst::Vocal || td.notes.empty()) return 0.0f;
     VocalState& vs = vocal_[track];
-    const Note& n = td.notes[0];
-    const Sample* smp = n.pitch < kMaxSamples ? samples_[n.pitch].load(std::memory_order_acquire) : nullptr;
-    if (!smp || smp->data.size() < 2) return 0.0f;
-    const double sec = beat * secPerBeat - static_cast<double>(n.start) * 0.001;
-    if (sec < 0.0 || sec * 1000.0 >= static_cast<double>(n.dur)) { vs.lastIdx = -1e9f; return 0.0f; }
-    const double idx = sec * smp->sampleRate;
-    const size_t i0 = static_cast<size_t>(idx);
-    if (i0 + 1 >= smp->data.size()) return 0.0f;
-    if (std::fabs(static_cast<float>(idx) - vs.lastIdx - static_cast<float>(smp->sampleRate) / sampleRate_) > 64.0f) vs.fadeIn = 0;  // vừa nhảy vị trí
-    vs.lastIdx = static_cast<float>(idx);
-    const float frac = static_cast<float>(idx - static_cast<double>(i0));
-    float x = (static_cast<float>(smp->data[i0]) * (1.0f - frac) + static_cast<float>(smp->data[i0 + 1]) * frac) * (1.0f / 32768.0f);
-    x *= static_cast<float>(n.vel) * 0.01f;
-    const int kFade = 192;
-    if (vs.fadeIn < kFade) x *= static_cast<float>(vs.fadeIn++) / static_cast<float>(kFade);
-    const float edge = static_cast<float>(std::min(sec, static_cast<double>(n.dur) * 0.001 - sec));
-    if (edge < 0.004f) x *= edge * 250.0f;  // vào/ra 4 ms để không "tách"
+    const double now = beat * secPerBeat;
+    float x = 0.0f;
+    const int count = std::min(static_cast<int>(td.notes.size()), kMaxAudioClips);
+    for (int k = 0; k < count; ++k) {
+        const Note& n = td.notes[static_cast<size_t>(k)];
+        const double sec = now - static_cast<double>(n.start) * 0.001;
+        if (sec < 0.0 || sec * 1000.0 >= static_cast<double>(n.dur)) { vs.lastIdx[k] = -1e9f; continue; }
+        const Sample* smp = n.pitch < kMaxSamples ? samples_[n.pitch].load(std::memory_order_acquire) : nullptr;
+        if (!smp || smp->data.size() < 2) continue;
+        const double idx = (sec + static_cast<double>(n.src) * 0.001) * smp->sampleRate;
+        const size_t i0 = static_cast<size_t>(idx);
+        if (i0 + 1 >= smp->data.size()) continue;
+        if (std::fabs(static_cast<float>(idx) - vs.lastIdx[k] - static_cast<float>(smp->sampleRate) / sampleRate_) > 64.0f) vs.fadeIn[k] = 0;  // vừa nhảy vị trí
+        vs.lastIdx[k] = static_cast<float>(idx);
+        const float frac = static_cast<float>(idx - static_cast<double>(i0));
+        float c = (static_cast<float>(smp->data[i0]) * (1.0f - frac) + static_cast<float>(smp->data[i0 + 1]) * frac) * (1.0f / 32768.0f);
+        c *= static_cast<float>(n.vel) * 0.01f;
+        const int kFade = 192;
+        if (vs.fadeIn[k] < kFade) c *= static_cast<float>(vs.fadeIn[k]++) / static_cast<float>(kFade);
+        const float edge = static_cast<float>(std::min(sec, static_cast<double>(n.dur) * 0.001 - sec));
+        if (edge < 0.004f) c *= edge * 250.0f;  // vào/ra 4 ms để không "tách"
+        x += c;
+    }
+    if (vs.bypass.load(std::memory_order_relaxed)) return x;  // file nhạc nhập: không qua chuỗi xử lý giọng
     // Thông cao ~90 Hz (bỏ ù, tiếng thở bụp), nâng độ sáng, nén.
     const float hpA = static_cast<float>(1.0 - std::exp(-2.0 * kPi * 90.0 / sampleRate_));
     vs.hp += (x - vs.hp) * hpA;

@@ -73,6 +73,8 @@ public:
     bool clearVocal(int id);
     // Chuỗi xử lý giọng của track: reverb (0..1), nén (0..1), độ sáng (0..1). Tắt hết = giọng thô.
     void setVocalFx(int track, float reverb, float comp, float bright) noexcept;
+    // true: track audio phát nguyên bản (file nhạc nhập), không qua chuỗi xử lý giọng.
+    void setVocalBypass(int track, bool bypass) noexcept;
     // Bật cờ ghi: engine báo mỗi cú đánh do nhịp pad phát ra để UI ghi thành nốt.
     void setRecording(bool on) noexcept { recording_.store(on, std::memory_order_relaxed); }
     // Lấy một sự kiện ghi: out = {tick, track, kitIdx, vel}. false nếu hết.
@@ -178,8 +180,11 @@ private:
     // Chuỗi giọng hát (chỉ luồng âm thanh chạm vào trạng thái; tham số là atomic).
     struct VocalState {
         std::atomic<float> reverb{0.22f}, comp{0.6f}, bright{0.4f};
-        float hp = 0.0f, lp = 0.0f, env = 0.0f, lastIdx = -1e9f;
-        int fadeIn = 0;
+        std::atomic<bool> bypass{false};
+        float hp = 0.0f, lp = 0.0f, env = 0.0f;
+        float lastIdx[kMaxAudioClips];
+        int fadeIn[kMaxAudioClips];
+        VocalState() { for (int i = 0; i < kMaxAudioClips; ++i) { lastIdx[i] = -1e9f; fadeIn[i] = 0; } }
     };
     VocalState vocal_[kMaxTracks];
     inline float renderVocal(int track, double beat, float secPerBeat, float& send) noexcept;

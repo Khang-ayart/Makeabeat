@@ -40,6 +40,7 @@ static void begin(const char* name) {
 
 struct N {
     int start, dur, pitch, vel;
+    int src = 0;  // chỉ track Vocal
 };
 using Kit = std::vector<std::array<int32_t, kPatchInts>>;
 struct Hit {
@@ -83,6 +84,7 @@ static std::vector<int32_t> encode(bool loop, int ls, int le, int len, const std
             d.push_back(n.dur);
             d.push_back(n.pitch);
             d.push_back(n.vel);
+            if (t.inst == Inst::Vocal) d.push_back(n.src);
         }
     }
     return d;
@@ -1181,11 +1183,11 @@ static void testVocalTrack() {
     core->setVocalFx(0, 0.0f, 0.0f, 0.0f);
     core->play(0);
     const auto out = renderAll(*core, 1, 48000 * 3, 480);
-    CHECK(peak(out, 0, 23000) == 0.0f, "sound before the clip start (%g)", peak(out, 0, 23000));
+    CHECK(peak(out, 0, 23000) < 1e-6f, "sound before the clip start (%g)", peak(out, 0, 23000));
     CHECK(peak(out, 30000, 40000) > 0.15f, "vocal silent (%f)", peak(out, 30000, 40000));
     const double f = estimateFreq(std::vector<float>(out.begin() + 30000, out.begin() + 90000), 48000, 1000.0);
     CHECK(std::fabs(f - 1000.0) < 8.0, "vocal pitch/speed wrong: %.2f Hz", f);
-    CHECK(peak(out, 120000 + 2000, 20000) == 0.0f, "sound after the clip end");
+    CHECK(peak(out, 120000 + 2000, 20000) < 1e-6f, "sound after the clip end");
     // Seek: tick 1920 = 1 s ở 120 BPM -> nằm 0,5 s trong bản thu, phải có tiếng ngay.
     auto c2 = make();
     c2->setVocalFx(0, 0.0f, 0.0f, 0.0f);
@@ -1201,6 +1203,45 @@ static void testVocalTrack() {
     CHECK(peak(o3, 2000, 40000) < 1e-6f, "replaced vocal still audible (%g)", peak(o3, 2000, 40000));
     CHECK(!c2->loadVocal(10, sine.data(), 100, sr) && !c2->loadVocal(384, sine.data(), 100, sr), "bad vocal slot accepted");
     CHECK(c2->clearVocal(300), "clearVocal failed");
+}
+
+static void testAudioClipsAndBypass() {
+    begin("Track audio nhiều clip: điểm vào (src) đúng, khoảng trống im lặng; bypass giữ nguyên bass thấp mà chuỗi giọng cắt");
+    const int sr = 44100;
+    std::vector<float> smp(static_cast<size_t>(sr));  // 0,5 s đầu 500 Hz, 0,5 s sau 2000 Hz
+    for (size_t i = 0; i < smp.size(); ++i) {
+        const float f = i < static_cast<size_t>(sr / 2) ? 500.0f : 2000.0f;
+        smp[i] = 0.5f * std::sin(2.0f * 3.14159265f * f * static_cast<float>(i) / sr);
+    }
+    auto core = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+    CHECK(core->loadVocal(301, smp.data(), static_cast<int>(smp.size()), sr), "load failed");
+    // clip A: 0..500 ms từ đầu mẫu; clip B: 1500..2000 ms lấy từ 500 ms trong mẫu.
+    publish(*core, encode(false, 0, 0, 0, {TrackSpec(Inst::Vocal, {{0, 500, 301, 100, 0}, {1500, 500, 301, 100, 500}})}));
+    core->setVocalBypass(0, true);
+    core->play(0);
+    const auto out = renderAll(*core, 1, 48000 * 3, 480);
+    auto freq = [&](int fromMs, double expected) {
+        const size_t a = static_cast<size_t>(fromMs) * 48;
+        return estimateFreq(std::vector<float>(out.begin() + a, out.begin() + a + 24000), 48000, expected);
+    };
+    CHECK(std::fabs(freq(0, 500.0) - 500.0) < 15.0, "clip A freq %.1f", freq(0, 500.0));
+    CHECK(std::fabs(freq(1500, 2000.0) - 2000.0) < 40.0, "clip B freq %.1f", freq(1500, 2000.0));
+    CHECK(peak(out, 48 * 600, 48 * 800) < 1e-6f, "gap not silent");
+    // bypass vs chuỗi giọng với âm trầm 50 Hz
+    std::vector<float> bass(static_cast<size_t>(sr));
+    for (size_t i = 0; i < bass.size(); ++i) bass[i] = 0.5f * std::sin(2.0f * 3.14159265f * 50.0f * static_cast<float>(i) / sr);
+    auto bassPeak = [&](bool bypass) {
+        auto c = std::unique_ptr<EngineCore>(newMono(48000, 120, false));
+        c->loadVocal(302, bass.data(), static_cast<int>(bass.size()), sr);
+        publish(*c, encode(false, 0, 0, 0, {TrackSpec(Inst::Vocal, {{0, 1000, 302, 100, 0}})}));
+        c->setVocalFx(0, 0.0f, 0.0f, 0.0f);
+        c->setVocalBypass(0, bypass);
+        c->play(0);
+        const auto o = renderAll(*c, 1, 48000, 480);
+        return peak(o, 12000, 24000);
+    };
+    const float raw = bassPeak(true), chain = bassPeak(false);
+    CHECK(raw > 0.1f && chain < raw * 0.75f, "bypass %.3f vs chain %.3f", raw, chain);
 }
 
 static void testCountInBeforeBarOne() {
@@ -1419,6 +1460,7 @@ int main() {
     testSynthRows();
     testSynthStyles();
     testVocalTrack();
+    testAudioClipsAndBypass();
     testCountInBeforeBarOne();
     testLooperMix();
     testPitchedSampleAndVary();
