@@ -71,6 +71,14 @@ data class Clip(
 /** Ô mẫu của giọng hát trong engine (mỗi bài chỉ có một track Vocal). */
 const val VOCAL_SLOT = 300
 
+fun tickToMs(tick: Int, bpm: Int): Int = (tick.toLong() * 60000L / (PPQ.toLong() * bpm.coerceAtLeast(1))).toInt()
+fun msToTick(ms: Int, bpm: Int): Int = (ms.toLong() * PPQ * bpm / 60000L).toInt()
+
+/** Một đoạn của bản thu giọng sau khi cắt: lấy [lenMs] từ [srcStartMs] của tệp đã xử lý, phát ở [atMs] (ms trong bài). */
+data class VocalSeg(val id: Int, val srcStartMs: Int, val lenMs: Int, val atMs: Int) {
+    val endMs: Int get() = atMs + lenMs
+}
+
 /**
  * Bản thu giọng của track Vocal. Hai tệp WAV mono 16-bit trong thư mục vocal của dự án: [rawFile] (nguyên bản vừa thu)
  * và [file] (đã lọc ồn / auto-tune / chuẩn hóa, là bản được phát). Xử lý luôn chạy lại từ bản gốc nên đổi ý thoải mái.
@@ -95,7 +103,13 @@ data class VocalClip(
     val comp: Float = 0.6f,
     val bright: Float = 0.4f,
     val gain: Float = 1.0f,
+    /** Các đoạn sau khi cắt; rỗng = chưa cắt (phát nguyên bản thu theo [startMs]). */
+    val segs: List<VocalSeg> = emptyList(),
 ) {
+    /** Các đoạn thực sự được phát (chưa cắt thì là một đoạn duy nhất). */
+    fun segments(): List<VocalSeg> =
+        if (segs.isNotEmpty()) segs else if (playMs > 0) listOf(VocalSeg(0, trimMs, playMs, offsetMs)) else emptyList()
+
     /** Vị trí trong bản thu ứng với giây 0 của bài, đã tính cả dịch. */
     val startMs: Int get() = syncMs + nudgeMs
     /** Số ms đầu bản thu bị cắt khi nạp vào engine. */
@@ -105,7 +119,7 @@ data class VocalClip(
     /** Độ dài phát trong engine (ms). */
     val playMs: Int get() = maxOf(0, lengthMs - trimMs)
     /** Bài cần bao nhiêu ô nhịp để phát hết giọng ở [bpm]. */
-    fun bars(bpm: Int): Int = Math.ceil((offsetMs + playMs) / 1000.0 * bpm / 240.0).toInt()
+    fun bars(bpm: Int): Int = Math.ceil((segments().maxOfOrNull { it.endMs } ?: 0) / 1000.0 * bpm / 240.0).toInt()
 }
 
 /** Tệp âm thanh nhập vào (WAV mono đã giải mã trong thư mục audio của dự án). [srcBpm] > 0: co/giãn theo BPM bài. */
@@ -221,13 +235,14 @@ fun Project.encodeForEngine(loop: Boolean, loopStart: Int, loopEnd: Int, length:
         val flat = ArrayList<Int>()
         var count = 0
         val vocal = if (launcherTrackId == null && t.instrument.isVocal) t.vocal else null
-        if (vocal != null && vocal.playMs > 0) {  // giọng hát: một "nốt" = (độ trễ ms, độ dài ms, ô mẫu, độ to)
-            flat.add(vocal.offsetMs)
-            flat.add(vocal.playMs)
-            flat.add(VOCAL_SLOT)
-            flat.add((vocal.gain * 100f).toInt().coerceIn(1, 127))
-            flat.add(0)  // src: vào từ đầu bản thu
-            count++
+        if (vocal != null) {  // giọng hát: mỗi đoạn = (bắt đầu ms, dài ms, ô mẫu, độ to, điểm vào ms trong bản thu)
+            for (sg in vocal.segments().take(MAX_AUDIO_CLIPS)) {
+                if (sg.lenMs <= 0) continue
+                flat.add(sg.atMs); flat.add(sg.lenMs); flat.add(VOCAL_SLOT)
+                flat.add((vocal.gain * 100f).toInt().coerceIn(1, 127))
+                flat.add(sg.srcStartMs.coerceAtLeast(0))
+                count++
+            }
         }
         if (launcherTrackId == null && t.instrument.isAudio) {  // mỗi đoạn: (bắt đầu ms, dài ms, ô mẫu, độ to, điểm vào ms)
             for (c in t.audio.take(MAX_AUDIO_CLIPS)) {

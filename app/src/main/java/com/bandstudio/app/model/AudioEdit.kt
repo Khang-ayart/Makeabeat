@@ -89,3 +89,51 @@ object AudioEdit {
     fun freeSlot(p: Project): Int? =
         (FIRST_AUDIO_SLOT..LAST_AUDIO_SLOT).firstOrNull { s -> p.sources.none { it.slot == s } }
 }
+
+/**
+ * Cắt giọng hát tại vị trí đầu phát (ms trong bài), chính xác từng mili giây (UI làm tròn theo 1/32 nhịp).
+ * Đoạn nào cũng tham chiếu bản thu đã xử lý, không tạo tệp mới nên hoàn tác thoải mái.
+ */
+object VocalEdit {
+    const val MIN_MS = 80
+
+    private fun Project.mapVocal(f: (VocalClip) -> VocalClip?): Project? {
+        val t = tracks.firstOrNull { it.instrument.isVocal && it.vocal != null } ?: return null
+        val next = f(t.vocal!!) ?: return null
+        return copy(tracks = tracks.map { if (it.id == t.id) it.copy(vocal = next) else it })
+    }
+
+    /** Đoạn đang phát tại [ms] (đầu đoạn tính, cuối đoạn không). */
+    fun segAt(c: VocalClip, ms: Int): VocalSeg? = c.segments().firstOrNull { ms >= it.atMs && ms < it.endMs }
+
+    fun split(p: Project, ms: Int): Project? = p.mapVocal { c ->
+        val segs = c.segments()
+        if (segs.size >= MAX_AUDIO_CLIPS) return@mapVocal null
+        val s = segs.firstOrNull { ms - it.atMs >= MIN_MS && it.endMs - ms >= MIN_MS } ?: return@mapVocal null
+        val cut = ms - s.atMs
+        val id = (segs.maxOf { it.id }) + 1
+        val left = s.copy(lenMs = cut)
+        val right = VocalSeg(id, s.srcStartMs + cut, s.lenMs - cut, ms)
+        c.copy(segs = segs.flatMap { if (it.id == s.id) listOf(left, right) else listOf(it) })
+    }
+
+    /** Xóa đoạn tại [ms]; không xóa đoạn cuối cùng (dùng "Xóa giọng" cho việc đó). */
+    fun delete(p: Project, ms: Int): Project? = p.mapVocal { c ->
+        val segs = c.segments()
+        val s = segAt(c, ms) ?: return@mapVocal null
+        if (segs.size <= 1) return@mapVocal null
+        c.copy(segs = segs.filter { it.id != s.id })
+    }
+
+    /** Dời đoạn tại [ms] đi [deltaMs] (âm = sớm hơn). Không ra khỏi đầu bài hoặc quá [MAX_BARS] ô. */
+    fun move(p: Project, ms: Int, deltaMs: Int): Project? = p.mapVocal { c ->
+        val segs = c.segments()
+        val s = segAt(c, ms) ?: return@mapVocal null
+        val at = s.atMs + deltaMs
+        if (at < 0 || at + s.lenMs > (MAX_BARS * 240000.0 / p.bpm).toInt()) return@mapVocal null
+        c.copy(segs = segs.map { if (it.id == s.id) it.copy(atMs = at) else it })
+    }
+
+    /** Bỏ mọi vết cắt, giọng phát nguyên bản thu. */
+    fun reset(p: Project): Project? = p.mapVocal { c -> if (c.segs.isEmpty()) null else c.copy(segs = emptyList()) }
+}

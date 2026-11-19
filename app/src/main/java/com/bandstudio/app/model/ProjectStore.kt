@@ -38,6 +38,7 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
                     put("denoise", v.denoise); put("enhance", v.enhance); put("tune", v.tune)
                     put("tuneStr", v.tuneStrength.toDouble()); put("tuneSpd", v.tuneSpeed.toDouble()); put("chroma", v.tuneChromatic)
                     put("reverb", v.reverb.toDouble()); put("comp", v.comp.toDouble()); put("bright", v.bright.toDouble()); put("gain", v.gain.toDouble())
+                    if (v.segs.isNotEmpty()) put("segs", JSONArray().also { a -> for (g in v.segs) a.put(JSONArray().put(g.id).put(g.srcStartMs).put(g.lenMs).put(g.atMs)) })
                 })
             }
             if (t.audio.isNotEmpty()) put("audio", JSONArray().also { a ->
@@ -99,6 +100,11 @@ fun projectFromJson(o: JSONObject): Project {
                 tuneSpeed = it.optDouble("tuneSpd", 0.6).toFloat().coerceIn(0f, 1f), tuneChromatic = it.optBoolean("chroma", false),
                 reverb = it.optDouble("reverb", 0.22).toFloat().coerceIn(0f, 1f), comp = it.optDouble("comp", 0.6).toFloat().coerceIn(0f, 1f),
                 bright = it.optDouble("bright", 0.4).toFloat().coerceIn(0f, 1f), gain = it.optDouble("gain", 1.0).toFloat().coerceIn(0.1f, 1.5f),
+                segs = (it.optJSONArray("segs") ?: JSONArray()).let { a ->
+                    (0 until minOf(a.length(), MAX_AUDIO_CLIPS)).mapNotNull { k ->
+                        a.optJSONArray(k)?.let { e -> VocalSeg(e.getInt(0), e.getInt(1).coerceAtLeast(0), e.getInt(2).coerceAtLeast(0), e.getInt(3).coerceAtLeast(0)) }
+                    }
+                },
             )
         }
         val audio = ArrayList<AudioClip>()

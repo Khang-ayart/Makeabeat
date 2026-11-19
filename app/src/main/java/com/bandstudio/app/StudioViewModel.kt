@@ -12,6 +12,8 @@ import androidx.lifecycle.viewModelScope
 import com.bandstudio.app.audio.AudioEngine
 import com.bandstudio.app.audio.AudioDecoder
 import com.bandstudio.app.model.AudioEdit
+import com.bandstudio.app.model.VocalEdit
+import com.bandstudio.app.model.tickToMs
 import com.bandstudio.app.model.AudioSource
 import com.bandstudio.app.audio.MixExporter
 import com.bandstudio.app.audio.VocalRecorder
@@ -195,6 +197,10 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         playing = false
         recording = false
         held.clear()
+        // Tạm dừng: giữ nguyên vị trí đầu phát (không nhảy về 0) để cắt / nghe tiếp từ đúng chỗ. Đang thu giọng hoặc ở trình soạn thì không.
+        if (!vocalRecording && (screen is Screen.Studio || screen is Screen.Vocal || screen is Screen.Mixer)) {
+            cursorTick = playheadTick.coerceIn(0, MAX_BARS * BAR_TICKS)
+        }
         playheadTick = cursorTick
     }
 
@@ -212,8 +218,11 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun seekToBar(bar: Int) {
-        cursorTick = bar.coerceIn(0, MAX_BARS) * BAR_TICKS
+    fun seekToBar(bar: Int) = seekToTick(bar.coerceIn(0, MAX_BARS) * BAR_TICKS)
+
+    /** Đặt đầu phát tới [tick] bất kỳ (kéo thanh chạy trên thước); đang phát thì phát tiếp từ đó. */
+    fun seekToTick(tick: Int) {
+        cursorTick = tick.coerceIn(0, MAX_BARS * BAR_TICKS)
         if (playing) {
             AudioEngine.play(cursorTick)
             graceUntilNanos = System.nanoTime() + 400_000_000L
@@ -937,6 +946,37 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         commit { p -> f(p, tid, cid) ?: p }
     }
 
+    /** Vị trí đầu phát hiện tại (tick) và theo ms trong bài. */
+    private fun headTick() = if (playing) playheadTick else cursorTick
+    fun headMs(): Int = tickToMs(headTick(), project?.bpm ?: 100)
+
+    /** Cắt giọng tại đầu phát. */
+    fun splitVocalAtHead() {
+        val p = project ?: return
+        if (VocalEdit.split(p, headMs()) == null) { audioMessage = "Đặt đầu phát vào giữa một đoạn giọng (cách mép ít nhất 0,1 giây) rồi cắt."; return }
+        commit { VocalEdit.split(it, headMs()) ?: it }
+        audioMessage = null
+    }
+    fun deleteVocalAtHead() {
+        val p = project ?: return
+        if (VocalEdit.delete(p, headMs()) == null) { audioMessage = "Không có đoạn nào dưới đầu phát để xóa (hoặc đây là đoạn cuối cùng)."; return }
+        commit { VocalEdit.delete(it, headMs()) ?: it }
+        audioMessage = null
+    }
+    /** Dời đoạn giọng dưới đầu phát [ticks] tick (âm = sớm hơn), đầu phát đi theo đoạn. */
+    fun moveVocalAtHead(ticks: Int) {
+        val p = project ?: return
+        val ms = headMs()
+        val delta = tickToMs(kotlin.math.abs(ticks), p.bpm) * (if (ticks < 0) -1 else 1)
+        if (VocalEdit.move(p, ms, delta) == null) { audioMessage = "Không dời được đoạn này."; return }
+        commit { VocalEdit.move(it, ms, delta) ?: it }
+        audioMessage = null
+        if (!playing) cursorTick = (cursorTick + ticks).coerceAtLeast(0)
+    }
+    fun resetVocalCuts() {
+        commit { VocalEdit.reset(it) ?: it }
+    }
+
     /** Cắt clip đang chọn tại ô [bar] (thường là vị trí đầu phát). */
     fun splitSelectedAudio(bar: Int) {
         val (tid, cid) = selectedAudio ?: return
@@ -1155,8 +1195,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     private fun pushVocalToEngine(clip: VocalClip) {
         val x = vocalSamples ?: return
         if (x.size < 4) return
-        val start = (clip.trimMs / 1000.0 * clip.sampleRate).toInt().coerceIn(0, x.size - 2)
-        AudioEngine.loadVocal(VOCAL_SLOT, if (start == 0) x else x.copyOfRange(start, x.size), clip.sampleRate)
+        AudioEngine.loadVocal(VOCAL_SLOT, x, clip.sampleRate)  // cả bản thu: các đoạn tự chọn điểm vào (src) khi phát
     }
 
     private fun commitVocal(clip: VocalClip, key: Pair<Int, Boolean>?) {
@@ -1232,9 +1271,9 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     fun nudgeVocal(deltaMs: Int) {
         val clip = vocalClip() ?: return
         if (vocalBusy || vocalRecording) return
-        val next = clip.copy(nudgeMs = (clip.nudgeMs + deltaMs).coerceIn(-1500, 1500))
+        val next = if (clip.segs.isEmpty()) clip.copy(nudgeMs = (clip.nudgeMs + deltaMs).coerceIn(-1500, 1500))
+        else clip.copy(segs = clip.segs.map { it.copy(atMs = (it.atMs - deltaMs).coerceAtLeast(0)) })  // đã cắt: dời tất cả các đoạn
         setVocalClip(next)
-        viewModelScope.launch(Dispatchers.Default) { pushVocalToEngine(next) }
     }
 
     fun setVocalMix(reverb: Float? = null, comp: Float? = null, bright: Float? = null, gain: Float? = null) {

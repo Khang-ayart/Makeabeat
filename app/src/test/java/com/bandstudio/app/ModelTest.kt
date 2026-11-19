@@ -684,4 +684,49 @@ class ModelTest {
         assertEquals(0f, late[0], 0.0001f); assertEquals(1f, late[1], 0.01f)
         assertEquals(List(3) { 0f }, Arranger.barActivity(FloatArray(0), sr, 0, bpm, 3))
     }
+
+    private fun vocalProject(): Project {
+        val t = Track(1, "Vocal", Instrument.VOCAL, vocal = vclip(sync = 0, nudge = -100))  // phát ở 100 ms, dài 10 000 ms
+        return Project("p", "n", bpm = 120, tracks = listOf(t))
+    }
+
+    @Test
+    fun vocalCutSplitDeleteMoveResetAndEncode() {
+        val E = com.bandstudio.app.model.VocalEdit
+        var p = vocalProject()
+        assertNull(E.split(p, 100 + 30))                 // quá sát mép
+        p = E.split(p, 4100)!!                            // cắt giữa
+        val segs = p.tracks[0].vocal!!.segs
+        assertEquals(2, segs.size)
+        assertEquals(4000, segs[0].lenMs); assertEquals(100, segs[0].atMs)
+        assertEquals(4100, segs[1].atMs); assertEquals(4000, segs[1].srcStartMs); assertEquals(6000, segs[1].lenMs)
+        val enc = p.encodeForEngine(false, 0, 0, 0).toList()
+        for (want in listOf(listOf(100, 4000, VOCAL_SLOT, 100, 0), listOf(4100, 6000, VOCAL_SLOT, 100, 4000)))
+            assertTrue("thiếu $want", (0..enc.size - 5).any { enc.subList(it, it + 5) == want })
+        p = E.move(p, 5000, 500)!!                        // dời đoạn phải 0,5 s
+        assertEquals(4600, p.tracks[0].vocal!!.segs[1].atMs)
+        assertNull(E.move(p, 5000, -99_999))
+        p = E.delete(p, 200)!!                            // xóa đoạn trái
+        assertEquals(1, p.tracks[0].vocal!!.segs.size)
+        assertNull(E.delete(p, 5000))                     // không xóa đoạn cuối
+        p = E.reset(p)!!
+        assertTrue(p.tracks[0].vocal!!.segs.isEmpty())
+        assertNull(E.reset(p))
+    }
+
+    @Test
+    fun vocalCutsSurviveSaveAndLoadAndDefaultSegmentMatchesOldBehaviour() {
+        val p0 = vocalProject()
+        assertEquals(listOf(com.bandstudio.app.model.VocalSeg(0, 0, 10_000, 100)), p0.tracks[0].vocal!!.segments())
+        val p = com.bandstudio.app.model.VocalEdit.split(p0, 5000)!!
+        val back = com.bandstudio.app.model.projectFromJson(org.json.JSONObject(p.toJson().toString()))
+        assertEquals(p, back)
+        assertEquals(6, back.endBar)  // 10,1 s ở 120 BPM = 6 ô
+    }
+
+    @Test
+    fun tickMsConversionRoundTrips() {
+        assertEquals(2000, com.bandstudio.app.model.tickToMs(3840, 120))
+        assertEquals(3840, com.bandstudio.app.model.msToTick(2000, 120))
+    }
 }

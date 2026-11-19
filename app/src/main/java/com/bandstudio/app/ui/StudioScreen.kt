@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -112,6 +113,7 @@ fun StudioScreen(vm: StudioViewModel) {
         }
         SelectedClipBar(vm, project)
         AudioClipBar(vm, project)
+        VocalCutBar(vm, project)
         TransportBar(vm, project)
     }
 
@@ -260,17 +262,24 @@ private fun AddTrackButton(onClick: () -> Unit) {
 
 @Composable
 private fun Ruler(vm: StudioViewModel, barCount: Int) {
+    val barPx = with(LocalDensity.current) { BarW.toPx() }
+    // Chạm hoặc kéo trên thước để đặt đầu phát; làm tròn 1/32 nhịp (120 tick) để cắt cho chuẩn.
+    val seek = { x: Float -> vm.seekToTick((Math.round(x / barPx * BAR_TICKS / 120f) * 120).coerceIn(0, barCount * BAR_TICKS)) }
     Row(
         Modifier
             .width(BarW * barCount)
             .height(RulerH)
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .pointerInput(barCount) { detectTapGestures { off -> seek(off.x) } }
+            .pointerInput(barCount) {
+                detectHorizontalDragGestures(
+                    onDragStart = { off -> seek(off.x) },
+                    onHorizontalDrag = { change, _ -> change.consume(); seek(change.position.x) },
+                )
+            },
     ) {
         for (i in 0 until barCount) {
-            Box(
-                Modifier.width(BarW).fillMaxHeight().clickable { vm.seekToBar(i) }, // chạm vào số ô nhịp để đặt vị trí phát
-                contentAlignment = Alignment.CenterStart,
-            ) {
+            Box(Modifier.width(BarW).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
                 Text(
                     "${i + 1}",
                     Modifier.padding(start = 6.dp),
@@ -307,18 +316,20 @@ private fun Lane(vm: StudioViewModel, t: Track, barCount: Int, bpm: Int) {
             }
         }
         t.vocal?.let { v ->
-            val startBars = v.offsetMs / 1000f * bpm / 240f
-            val lenBars = v.playMs / 1000f * bpm / 240f
-            Box(
-                Modifier
-                    .offset(x = BarW * startBars)
-                    .width(BarW * lenBars)
-                    .fillMaxHeight()
-                    .padding(vertical = 4.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(t.instrument.color).copy(alpha = 0.55f)),
-                contentAlignment = Alignment.CenterStart,
-            ) { Text("Giọng thu", Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.labelMedium, color = Color.Black) }
+            for (sg in v.segments()) {
+                val startBars = sg.atMs / 1000f * bpm / 240f
+                val lenBars = sg.lenMs / 1000f * bpm / 240f
+                Box(
+                    Modifier
+                        .offset(x = BarW * startBars)
+                        .width(BarW * lenBars)
+                        .fillMaxHeight()
+                        .padding(vertical = 4.dp, horizontal = 1.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(t.instrument.color).copy(alpha = 0.55f)),
+                    contentAlignment = Alignment.CenterStart,
+                ) { Text("Giọng", Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.labelMedium, color = Color.Black, maxLines = 1) }
+            }
         }
         if (t.instrument.isAudio) for (c in t.audio) {
             val src = vm.project?.source(c.sourceId) ?: continue
@@ -449,7 +460,10 @@ private fun SelectedClipBar(vm: StudioViewModel, project: Project) {
 /** Thanh chỉnh clip âm thanh nhập vào: cắt tại đầu phát, nhân bản, dời, cắt đầu / cuối, gắn nhãn phần bài. */
 @Composable
 private fun AudioClipBar(vm: StudioViewModel, project: Project) {
-    val (tid, cid) = vm.selectedAudio ?: run { vm.audioMessage?.let { MessageLine(it) }; return }
+    val (tid, cid) = vm.selectedAudio ?: run {
+        if (project.tracks.none { it.instrument.isVocal && it.vocal != null }) vm.audioMessage?.let { MessageLine(it) }
+        return
+    }
     val track = project.track(tid)
     val clip = track?.audio?.firstOrNull { it.id == cid }
     val src = clip?.let { project.source(it.sourceId) }
@@ -481,6 +495,39 @@ private fun AudioClipBar(vm: StudioViewModel, project: Project) {
             }
         }
     }
+}
+
+/** Cắt giọng tại đầu phát (kéo trên thước để chọn chỗ): cắt, xóa đoạn, dời đoạn theo 1/16 hoặc 1 phách. Chỉ hiện khi có giọng và không đang chọn clip nhạc. */
+@Composable
+private fun VocalCutBar(vm: StudioViewModel, project: Project) {
+    val v = project.tracks.firstOrNull { it.instrument.isVocal }?.vocal ?: return
+    if (vm.selectedAudio != null) return
+    val ms = vm.headMs()
+    val under = com.bandstudio.app.model.VocalEdit.segAt(v, ms) != null
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+        Column {
+            vm.audioMessage?.let { MessageLine(it) }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Giọng • ${formatClock(ms)}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 6.dp), maxLines = 1)
+                Button(onClick = vm::splitVocalAtHead, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("Cắt") }
+                TextButton(onClick = vm::deleteVocalAtHead, enabled = under) { Text("Xóa đoạn") }
+                TextButton(onClick = { vm.moveVocalAtHead(-960) }, enabled = under) { Text("‹‹") }
+                TextButton(onClick = { vm.moveVocalAtHead(-240) }, enabled = under) { Text("‹") }
+                TextButton(onClick = { vm.moveVocalAtHead(240) }, enabled = under) { Text("›") }
+                TextButton(onClick = { vm.moveVocalAtHead(960) }, enabled = under) { Text("››") }
+                if (v.segs.isNotEmpty()) TextButton(onClick = vm::resetVocalCuts) { Text("Bỏ các vết cắt") }
+            }
+        }
+    }
+}
+
+private fun formatClock(ms: Int): String {
+    val t = ms.coerceAtLeast(0)
+    return "%d:%02d.%d".format(t / 60000, t / 1000 % 60, t / 100 % 10)
 }
 
 @Composable
@@ -531,6 +578,10 @@ private fun TransportBar(vm: StudioViewModel, project: Project) {
                     if (vm.playing) StopGlyph(Modifier.size(26.dp), Color(0xFF0B1330)) else PlayGlyph(Modifier.size(26.dp), Color(0xFF0B1330))
                 }
                 Spacer(Modifier.weight(1f))
+                Text(
+                    formatClock(com.bandstudio.app.model.tickToMs(if (vm.playing) vm.playheadTick else vm.cursorTick, project.bpm)),
+                    style = MaterialTheme.typography.titleMedium,
+                )
                 ToggleChip("Lặp", vm.loopAll, vm::toggleLoop)
                 ToggleChip("Metronome", vm.metronome, vm::toggleMetronome)
             }
