@@ -1316,22 +1316,26 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         stopPlayback()
         viewModelScope.launch {
             vocalBusy = true
-            val melody = if (p.followMelody && clip != null) {
+            // Dò cao độ một lần: dùng cho hợp âm bám giọng (cả hai chế độ) và cho giai điệu (chế độ "theo giai điệu").
+            val hz = withContext(Dispatchers.Default) {
+                val x = vocalSamples
+                if (x == null || clip == null) FloatArray(0) else AudioEngine.trackVocalPitch(x, clip.sampleRate)
+            }
+            val melody = if (p.followMelody && clip != null && hz.isNotEmpty()) {
                 withContext(Dispatchers.Default) {
-                    val x = vocalSamples
-                    if (x == null) emptyList() else {
-                        val hz = AudioEngine.trackVocalPitch(x, clip.sampleRate)
-                        Arranger.melodyFromPitch(hz, AudioEngine.vocalPitchHop(clip.sampleRate), clip.sampleRate, clip.startMs, p.bpm, p.keyRoot, p.minor)
-                    }
+                    Arranger.melodyFromPitch(hz, AudioEngine.vocalPitchHop(clip.sampleRate), clip.sampleRate, clip.startMs, p.bpm, p.keyRoot, p.minor)
                 }
             } else emptyList()
-            val activity = withContext(Dispatchers.Default) {
+            val profile = withContext(Dispatchers.Default) {
                 val x = vocalSamples
-                if (x == null || clip == null) emptyList() else Arranger.barActivity(x, clip.sampleRate, clip.startMs, p.bpm, Arranger.totalBars(vocalBars))
+                if (x == null || clip == null) null
+                else Arranger.vocalProfile(x, clip.sampleRate, clip.startMs, p.bpm, Arranger.totalBars(vocalBars), hz, AudioEngine.vocalPitchHop(clip.sampleRate))
             }
-            commit { cur -> Arranger.arrange(cur, genre, vocalBars, melody, activity) }
+            commit { cur -> Arranger.arrange(cur, genre, vocalBars, melody, profile = profile) }
             vocalBusy = false
-            vocalMessage = if (p.followMelody && melody.isEmpty()) "Không dò được giai điệu rõ ràng, piano đệm hợp âm." else null
+            val n = project?.arrangeSeed ?: 1
+            vocalMessage = (if (p.followMelody && melody.isEmpty()) "Không dò được giai điệu rõ ràng, nhạc đệm hợp âm theo giọng. " else "") +
+                "Bản phối #$n. Bấm Tạo beat lần nữa để ra biến thể khác."
             cursorTick = 0
             startPlayback()
         }

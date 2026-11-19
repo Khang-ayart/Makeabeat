@@ -15,6 +15,7 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
     put("minor", minor)
     put("arrGenre", arrangeGenre)
     put("follow", followMelody)
+    put("arrSeed", arrangeSeed)
     put("sources", JSONArray().also { a ->
         for (x in sources) a.put(JSONObject().apply {
             put("id", x.id); put("name", x.name); put("file", x.file); put("rate", x.sampleRate)
@@ -158,6 +159,7 @@ fun projectFromJson(o: JSONObject): Project {
         minor = o.optBoolean("minor", false),
         arrangeGenre = o.optString("arrGenre", "hiphop"),
         followMelody = o.optBoolean("follow", false),
+        arrangeSeed = o.optInt("arrSeed", 0),
     )
 }
 

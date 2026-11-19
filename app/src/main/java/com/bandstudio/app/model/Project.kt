@@ -201,6 +201,8 @@ data class Project(
     val arrangeGenre: String = "hiphop",
     /** true: nhạc cụ đánh theo nốt giọng hát (melodic/pop); false: chỉ đệm hợp âm (rap). */
     val followMelody: Boolean = false,
+    /** Số lần đã "Tạo beat": hạt giống để mỗi lần ra một biến thể khác. */
+    val arrangeSeed: Int = 0,
     /** Các tệp âm thanh nhập vào (dùng chung giữa các clip). */
     val sources: List<AudioSource> = emptyList(),
 ) {

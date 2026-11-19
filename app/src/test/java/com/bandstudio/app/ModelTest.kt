@@ -730,4 +730,69 @@ class ModelTest {
         assertEquals(2000, com.bandstudio.app.model.tickToMs(3840, 120))
         assertEquals(3840, com.bandstudio.app.model.msToTick(2000, 120))
     }
+
+    /** Giọng giả: tiếng bùng ngắn ở các bước 1/16 [stepsOn] của ô 0 (120 BPM: 1 ô = 2 s, 1 bước = 125 ms). */
+    private fun burstVoice(sr: Int, stepsOn: List<Int>, bars: Int = 2): FloatArray {
+        val x = FloatArray(sr * 2 * bars)
+        for (s in stepsOn) {
+            val a = (s * 0.125 * sr).toInt()
+            for (i in 0 until (0.06 * sr).toInt()) x[a + i] = (0.6 * Math.sin(i * 0.25)).toFloat()
+        }
+        return x
+    }
+
+    @Test
+    fun onsetsLandOnTheStepsWhereSyllablesStart() {
+        val sr = 8000
+        val on = Arranger.barOnsets(burstVoice(sr, listOf(0, 4, 10)), sr, 0, 120, 2)
+        assertEquals((1 shl 0) or (1 shl 4) or (1 shl 10), on[0])
+        assertEquals(0, on[1])
+        assertEquals(listOf(0, 0), Arranger.barOnsets(FloatArray(sr * 4), sr, 0, 120, 2))
+    }
+
+    @Test
+    fun chordsFromPitchClassesFollowTheVoiceAndVaryWithTheSeed() {
+        val a = DoubleArray(12).also { it[9] = 40.0; it[0] = 25.0; it[4] = 20.0 }   // A C E -> Am
+        val g = DoubleArray(12).also { it[7] = 40.0; it[11] = 25.0; it[2] = 20.0 }  // G B D -> G
+        val ch = Arranger.chordsFromPitchClasses(listOf(a, g), 2, 9, true, java.util.Random(1), 0)
+        assertEquals(0, ch[0].root); assertTrue(ch[0].minor)
+        assertEquals(10, ch[1].root); assertFalse(ch[1].minor)   // G = bậc VII của Am
+        // Ô trống cao độ: đi theo vòng hợp âm dự phòng, và vòng khác nhau cho kết quả khác nhau.
+        val empty = List(4) { DoubleArray(12) }
+        val f0 = Arranger.chordsFromPitchClasses(empty, 4, 0, true, java.util.Random(1), 0).map { it.root to it.minor }
+        val f1 = Arranger.chordsFromPitchClasses(empty, 4, 0, true, java.util.Random(1), 1).map { it.root to it.minor }
+        assertTrue(f0 != f1)
+    }
+
+    private fun arrangeWith(seed: Int, profile: Arranger.VocalProfile?): Project {
+        val vocal = Track(3, "Vocal", Instrument.VOCAL, vocal = vclip(len = 30_000))
+        val base = Project("p", "n", bpm = 90, tracks = listOf(vocal), nextId = 10, keyRoot = 9, minor = true, arrangeSeed = seed)
+        return Arranger.arrange(base, Catalog.genres.first(), vocalBars = 12, profile = profile)
+    }
+
+    private fun fingerprint(p: Project): List<Any> =
+        p.tracks.filter { it.auto }.map { t -> t.instrument to t.clips.flatMap { c -> c.notes.map { Triple(c.startBar, it.start, it.pitch) } } }
+
+    @Test
+    fun pressingMakeBeatRepeatedlyGivesDifferentButReproducibleResults() {
+        val onsets = List(16) { 0b0001000100010001 }
+        val prof = Arranger.VocalProfile(List(16) { 0.8f }, List(16) { DoubleArray(12).also { v -> v[9] = 30.0; v[0] = 20.0; v[4] = 15.0 } }, onsets)
+        val runs = (0 until 8).map { fingerprint(arrangeWith(it, prof)) }
+        assertEquals("cùng hạt giống phải cho cùng kết quả", fingerprint(arrangeWith(3, prof)), runs[3])
+        assertTrue("8 lần tạo phải ra ít nhất 4 bản khác nhau, được ${runs.toSet().size}", runs.toSet().size >= 4)
+        assertEquals(1, arrangeWith(0, prof).arrangeSeed)
+    }
+
+    @Test
+    fun accompanimentAvoidsVocalSyllablesWhenTheVoiceIsBusy() {
+        // Giọng dày đặc, nhấn ở các phách (bước 0, 4, 8, 12): piano không nên đánh trùng nhiều vào các bước đó.
+        val busy = Arranger.VocalProfile(List(16) { 1f }, List(16) { DoubleArray(12) }, List(16) { 0b0001000100010001 })
+        var onBeat = 0; var all = 0
+        for (seed in 0 until 6) {
+            val out = arrangeWith(seed, busy)
+            for (c in out.tracks.first { it.instrument == Instrument.PIANO }.clips)
+                for (n in c.notes) { all++; if ((n.start % BAR_TICKS) / 240 % 4 == 0 && n.start % 240 < 40) onBeat++ }
+        }
+        assertTrue("piano trùng quá nhiều vào âm tiết của giọng: $onBeat/$all", onBeat < all * 0.8)
+    }
 }

@@ -1,5 +1,7 @@
 package com.bandstudio.app.model
 
+import java.util.Random
+import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
@@ -190,22 +192,192 @@ object Arranger {
     private fun isMelodicRow(pad: Int) = pad / PADS_PER_ROW >= 4
 
     /**
-     * Dựng các track tự động vào [p] (thay các track tự động cũ, giữ nguyên track của người dùng). [melody]: nốt của giọng hát
-     * (tick tuyệt đối) dùng khi [Project.followMelody]: hợp âm của piano / guitar / bass bám theo giai điệu đó, còn nhạc cụ chỉ
-     * đệm nhẹ (không đánh đè lên giọng). [activity]: độ hoạt động của giọng theo ô nhịp ([barActivity]); rỗng = coi như vừa phải.
+     * Đặc điểm của giọng theo từng ô nhịp, để nhạc "nghe" được giọng: [activity] độ to (0..1), [pitchClasses] histogram 12 cao độ
+     * (tuyệt đối, C = 0) từ các khung có cao độ, [onsets] mặt nạ 16 bit: bước 1/16 nào có âm tiết / nhấn mới bắt đầu.
      */
-    fun arrange(p: Project, genre: Genre, vocalBars: Int, melody: List<NoteEvent> = emptyList(), activity: List<Float> = emptyList()): Project {
+    class VocalProfile(val activity: List<Float>, val pitchClasses: List<DoubleArray>, val onsets: List<Int>) {
+        val bars: Int get() = activity.size
+        /** Tổng "lượng cao độ" đủ để tin vào hợp âm suy ra từ giọng. */
+        fun hasPitch(): Boolean = pitchClasses.sumOf { it.sum() } > 30.0
+        /** Dấu vân tay nhỏ của giọng: trộn vào hạt giống để hai giọng khác nhau ra hai bản phối khác nhau. */
+        fun fingerprint(): Long {
+            var h = 1469598103934665603L
+            for (o in onsets) h = (h xor o.toLong()) * 1099511628211L
+            for (a in activity) h = (h xor (a * 100).toLong()) * 1099511628211L
+            return h
+        }
+    }
+
+    /** Dựng [VocalProfile] từ bản thu (mẫu mono) và cao độ từng khung [hz] (0 = không có; có thể rỗng). [startMs]: như [melodyFromPitch]. */
+    fun vocalProfile(samples: FloatArray, sampleRate: Int, startMs: Int, bpm: Int, bars: Int, hz: FloatArray, hopSamples: Int): VocalProfile {
+        val act = barActivity(samples, sampleRate, startMs, bpm, bars)
+        val pcs = List(bars) { DoubleArray(12) }
+        val barSec = 240.0 / bpm
+        if (hz.isNotEmpty() && hopSamples > 0 && sampleRate > 0) {
+            val frameSec = hopSamples.toDouble() / sampleRate
+            for (k in hz.indices) {
+                val f = hz[k]
+                if (f <= 0f) continue
+                val t = (k + 0.5) * frameSec - startMs / 1000.0
+                if (t < 0.0) continue
+                val bar = (t / barSec).toInt()
+                if (bar >= bars) break
+                val m = (69.0 + 12.0 * ln(f / 440.0) / ln(2.0)).roundToInt()
+                pcs[bar][Math.floorMod(m, 12)] += 1.0
+            }
+        }
+        return VocalProfile(act, pcs, barOnsets(samples, sampleRate, startMs, bpm, bars))
+    }
+
+    /**
+     * Bước 1/16 nào trong mỗi ô nhịp có âm tiết mới bắt đầu: đường bao năng lượng 5 ms, một "onset" là chỗ năng lượng vọt lên
+     * hơn 2 lần mức trung bình 60 ms trước đó (và trên nền ồn). Mỗi ô một mặt nạ 16 bit (bit s = bước s).
+     */
+    fun barOnsets(samples: FloatArray, sampleRate: Int, startMs: Int, bpm: Int, bars: Int): List<Int> {
+        val out = IntArray(max(bars, 0))
+        if (samples.isEmpty() || sampleRate <= 0 || bpm <= 0 || bars <= 0) return out.toList()
+        val hop = max(1, sampleRate / 200)  // 5 ms
+        val n = samples.size / hop
+        val env = DoubleArray(n)
+        var peak = 0.0
+        for (f in 0 until n) {
+            var sum = 0.0
+            for (i in f * hop until (f + 1) * hop) sum += samples[i].toDouble() * samples[i]
+            env[f] = Math.sqrt(sum / hop)
+            if (env[f] > peak) peak = env[f]
+        }
+        if (peak < 1e-4) return out.toList()
+        val floor = peak * 0.08
+        val back = 12  // 60 ms
+        var lastOnset = -100
+        val barSec = 240.0 / bpm
+        val stepSec = barSec / 16.0
+        for (f in 1 until n) {
+            if (env[f] < floor) continue
+            val lo = max(0, f - back)
+            var avg = 0.0
+            for (j in lo until f) avg += env[j]
+            avg /= (f - lo)
+            if (env[f] > 2.0 * avg + floor * 0.3 && f - lastOnset >= 10) {  // >= 50 ms từ onset trước
+                lastOnset = f
+                val t = f * hop.toDouble() / sampleRate - startMs / 1000.0
+                if (t < 0) continue
+                val pos = t / stepSec
+                val step = pos.roundToInt()
+                val bar = step / 16
+                if (bar in 0 until bars) out[bar] = out[bar] or (1 shl (step % 16))
+            }
+        }
+        return out.toList()
+    }
+
+    /**
+     * Hợp âm của từng ô nhịp từ histogram cao độ của giọng (tuyệt đối): chấm điểm hợp âm trong thang của tông như
+     * [chordsFromMelody], thêm nhiễu theo hạt giống [rnd] (mỗi lần "Tạo beat" chọn khác đi nhưng vẫn hợp giọng), ưu tiên ở lại
+     * hợp âm cũ. Ô gần như không có cao độ: đi tiếp theo vòng hợp âm số [fallbackProg] của thể loại.
+     */
+    fun chordsFromPitchClasses(pcs: List<DoubleArray>, bars: Int, key: Int, minor: Boolean, rnd: Random, fallbackProg: Int): List<Patterns.Chord> {
+        val degrees = if (minor) minorDegrees else majorDegrees
+        val fb = Patterns.progression(minor, fallbackProg)
+        val out = ArrayList<Patterns.Chord>()
+        var prev: Patterns.Chord? = null
+        for (bar in 0 until bars) {
+            val w = pcs.getOrNull(bar)
+            val total = w?.sum() ?: 0.0
+            if (w == null || total < 6.0) {
+                val c = fb[bar % fb.size]
+                out.add(c); prev = c
+                continue
+            }
+            var best = degrees[0]
+            var bestScore = -1e18
+            for (c in degrees) {
+                val iv = c.intervals
+                val r = Math.floorMod(key + c.root, 12)
+                val t3 = (r + iv[1]) % 12
+                val t5 = (r + iv[2]) % 12
+                var sc = w[r] * 1.0 + w[t3] * 0.8 + w[t5] * 0.7
+                for (pc in 0 until 12) if (pc != r && pc != t3 && pc != t5) sc -= w[pc] * 0.3
+                if (prev != null && c.root == prev.root && c.minor == prev.minor) sc += total * 0.1
+                sc += (rnd.nextDouble() - 0.5) * total * 0.35
+                if (sc > bestScore) { bestScore = sc; best = c }
+            }
+            out.add(best); prev = best
+        }
+        return out
+    }
+
+    private val pianoPatterns = listOf(
+        "x...............", "x.......x.......", "x.....x.x.......", "x..x....x..x....", "..x.....x.....x.",
+        "x.x...x...x.....", "x.......x.x.....", "...x......x.....", "x...x...x...x...", "x..x..x.........",
+    )
+    private val guitarPatterns = listOf(
+        "x.......x.......", "x...x...x...x...", "x..x..x.x..x....", "..x...x...x...x.", "x.....x...x.....", "x.x.....x.x.....",
+    )
+    private val bassPatterns = listOf(
+        "x.......x.......", "x.....x.x.......", "x..x....x..x....", "x.......x.x.....", "x.x.....x.......", "x.....x...x.....",
+    )
+
+    private fun steps(pattern: String): List<Int> = pattern.indices.filter { pattern[it] == 'x' }
+
+    /**
+     * Chọn mẫu nhịp cho khối 4 ô nhịp [bar]..[bar]+3: cú đánh tránh trùng bước có âm tiết của giọng khi giọng đang hát (chừa chỗ cho lời),
+     * thích lấp vào chỗ giọng nghỉ khi giọng thưa, cộng nhiễu theo hạt giống để mỗi lần tạo ra một kiểu khác.
+     */
+    private fun pickPattern(patterns: List<String>, prof: VocalProfile?, bar: Int, rnd: Random, quietBias: Double): String {
+        var best = patterns[0]
+        var bestScore = -1e18
+        for (pt in patterns) {
+            val st = steps(pt)
+            var sc = 0.0
+            if (prof != null) for (i in 0 until BLOCK_BARS) {
+                val gb = bar + i
+                val on = prof.onsets.getOrElse(gb) { 0 }
+                val a = prof.activity.getOrElse(gb) { 0.5f }.toDouble()
+                for (s in st) {
+                    val clash = ((on shr s) and 1) == 1 || ((on shr ((s + 15) % 16)) and 1) == 1
+                    if (clash) sc -= 1.6 * a
+                    else if (((on shr s) and 0xF) == 0) sc += 0.5 * (1.0 - a)
+                    sc -= 0.25 * a  // giọng to: thưa đi
+                }
+            }
+            sc -= abs(st.size - 3) * 0.1 * (1.0 - quietBias)
+            sc += rnd.nextDouble() * 1.4
+            if (sc > bestScore) { bestScore = sc; best = pt }
+        }
+        return best
+    }
+
+    /**
+     * Dựng các track tự động vào [p] (thay các track tự động cũ, giữ nguyên track của người dùng). Mỗi lần gọi tăng
+     * [Project.arrangeSeed] nên bấm "Tạo beat" nhiều lần ra các biến thể khác nhau (vòng hợp âm, mẫu nhịp piano / guitar / bass, hàng bộ gõ).
+     * [profile] (từ [vocalProfile]) cho hợp âm bám cao độ giọng và mẫu nhịp né / lấp theo âm tiết của giọng.
+     * [melody] (nốt giọng, tick tuyệt đối) dùng khi [Project.followMelody]: piano nhấn khẽ giai điệu ở chorus, looper chỉ giữ trống.
+     * [activity] (khi không có [profile]): độ to của giọng theo ô; rỗng = coi như vừa phải.
+     */
+    fun arrange(
+        p: Project, genre: Genre, vocalBars: Int, melody: List<NoteEvent> = emptyList(),
+        activity: List<Float> = emptyList(), profile: VocalProfile? = null,
+    ): Project {
         val key = Math.floorMod(p.keyRoot, 12)
         val minor = p.minor
         val total = totalBars(vocalBars)
         val blocks = total / BLOCK_BARS
         val secs = sections(blocks)
         val follow = p.followMelody && melody.isNotEmpty()
-        val fixed = Patterns.progression(minor, 0)  // 4 hợp âm, mỗi ô nhịp một hợp âm (khi không có giai điệu)
-        val chords = if (follow) chordsFromMelody(melody, total, key, minor) else List(total) { fixed[it % fixed.size] }
-        fun act(bar: Int) = activity.getOrElse(bar) { 0.5f }
+        val seed = p.arrangeSeed + 1
+        val rnd = Random(seed * 7919L + (profile?.fingerprint() ?: 0L))
+        val acts = profile?.activity ?: activity
+        fun act(bar: Int) = acts.getOrElse(bar) { 0.5f }
         /** Độ mạnh nốt: nhỏ đi tới 35% khi giọng đang hát to. */
         fun vel(v: Int, bar: Int) = (v * (1f - 0.35f * act(bar))).roundToInt().coerceIn(20, 127)
+
+        val chords = when {
+            profile != null && profile.hasPitch() -> chordsFromPitchClasses(profile.pitchClasses, total, key, minor, rnd, rnd.nextInt(4))
+            follow -> chordsFromMelody(melody, total, key, minor)
+            else -> { val f = Patterns.progression(minor, rnd.nextInt(4)); List(total) { f[it % f.size] } }
+        }
+        fun chordAt(bar: Int) = chords[bar.coerceIn(0, chords.size - 1)]
 
         var nextId = p.nextId
         fun nid() = nextId++
@@ -218,18 +390,32 @@ object Arranger {
         for (b in 0 until blocks) {
             val bar = b * BLOCK_BARS
             val sec = secs[b]
-            // Looper: bám giai điệu thì chỉ giữ trống / bộ gõ (bass, hợp âm do các track riêng đánh theo giọng)
-            val pads = padsFor(sec, follow).filter { !follow || !isMelodicRow(it) }
-            val loopNotes = pads.flatMap { pad -> clipNotes(Patterns.padHitsIn(genre, key, minor, pad)) }
+            val blockAct = (0 until BLOCK_BARS).map { act(bar + it) }.average().toFloat()
+            // Looper: hi-hat / bộ gõ đổi biến thể theo hạt giống; giọng đang hát dày thì bỏ hàng bộ gõ cho thoáng.
+            // Bám giai điệu thì chỉ giữ trống / bộ gõ (bass, hợp âm do các track riêng đánh theo giọng).
+            var pads = padsFor(sec, follow).filter { !follow || !isMelodicRow(it) }
+            if (sec != Section.INTRO && sec != Section.OUTRO) {
+                pads = pads.map { pd -> if (pd / PADS_PER_ROW == 2 || pd / PADS_PER_ROW == 3) (pd / PADS_PER_ROW) * PADS_PER_ROW + rnd.nextInt(PADS_PER_ROW) else pd }
+                if (sec == Section.VERSE && blockAct > 0.7f) pads = pads.filter { it / PADS_PER_ROW != 3 }
+            }
+            val loopNotes = pads.distinct().flatMap { pad -> clipNotes(Patterns.padHitsIn(genre, key, minor, pad)) }
             if (loopNotes.isNotEmpty()) looperClips.add(Clip(nid(), bar, BLOCK_BARS, loopNotes.sortedBy { it.start }))
-            // Piano: đệm nhẹ theo hợp âm của giọng. Chorus có thêm giai điệu nhấn khẽ lên một quãng tám.
+
+            // Piano: hợp âm theo giọng, mẫu nhịp chọn theo âm tiết của giọng. Chorus nhấn khẽ giai điệu lên một quãng tám.
             val pn = ArrayList<NoteEvent>()
+            val pPat = if (sec == Section.INTRO || sec == Section.OUTRO) pianoPatterns[rnd.nextInt(2)]
+            else pickPattern(pianoPatterns, profile, bar, rnd, if (sec == Section.CHORUS) 0.2 else 0.6)
+            val pSteps = steps(pPat)
             for (i in 0 until BLOCK_BARS) {
                 val gb = bar + i
-                val notes = Patterns.chordNotes(key, chords[gb.coerceAtMost(chords.size - 1)])
+                val notes = Patterns.chordNotes(key, chordAt(gb))
                 val base = if (sec == Section.CHORUS) 62 else 50
-                val stabs = if (sec == Section.OUTRO || sec == Section.INTRO) listOf(0) else if (sec == Section.CHORUS) listOf(0, 1920) else listOf(0)
-                for (off in stabs) for ((k, n) in notes.withIndex()) pn.add(NoteEvent(i * BAR_TICKS + off + k * 8, if (off == 0) 1800 else 1500, n, vel(base, gb) - k * 2))
+                for ((si, st) in pSteps.withIndex()) {
+                    val nextSt = pSteps.getOrNull(si + 1) ?: 16
+                    val dur = ((nextSt - st).coerceAtMost(8)) * STEP_TICKS - 60
+                    val accent = if (st == 0) 6 else 0
+                    for ((k, n) in notes.withIndex()) pn.add(NoteEvent(i * BAR_TICKS + st * STEP_TICKS + k * 8, dur.coerceAtLeast(120), n, (vel(base, gb) + accent - k * 2).coerceIn(20, 127)))
+                }
             }
             if (follow && sec == Section.CHORUS) {
                 for (n in split(melody, bar * BAR_TICKS, (bar + BLOCK_BARS) * BAR_TICKS)) {
@@ -238,35 +424,43 @@ object Arranger {
                 }
             }
             if (pn.isNotEmpty()) pianoClips.add(Clip(nid(), bar, BLOCK_BARS, pn.sortedBy { it.start }))
-            // Guitar: chỉ quạt khi giọng thưa (verse) hoặc nhẹ hơn (chorus); không có ở intro / outro
+
+            // Guitar: quạt khi giọng thưa (verse) hoặc nhẹ hơn (chorus); không có ở intro / outro
             if (sec == Section.VERSE || sec == Section.CHORUS) {
                 val gn = ArrayList<NoteEvent>()
+                val gPat = pickPattern(guitarPatterns, profile, bar, rnd, if (sec == Section.CHORUS) 0.3 else 0.7)
+                val gSteps = steps(gPat)
                 for (i in 0 until BLOCK_BARS) {
                     val gb = bar + i
                     if (sec == Section.VERSE && act(gb) > 0.6f && i % 2 == 1) continue  // chừa chỗ cho lời
-                    val chord = Patterns.chordNotes(key, chords[gb.coerceAtMost(chords.size - 1)])
+                    val chord = Patterns.chordNotes(key, chordAt(gb))
                     val tones = listOf(if (chord[0] - 12 >= 40) chord[0] - 12 else chord[0]) + chord
-                    val strums = if (sec == Section.CHORUS) listOf(0 to 70, 1920 to 58) else listOf(0 to 56)
-                    for ((off, v) in strums) {
-                        tones.forEachIndexed { s, n -> gn.add(NoteEvent(i * BAR_TICKS + off + s * 36, 900, n, vel(v, gb) - s * 3)) }
+                    for (st in gSteps) {
+                        val v = (if (sec == Section.CHORUS) 66 else 54) + (if (st % 4 == 0) 4 else -2)
+                        tones.forEachIndexed { s, n -> gn.add(NoteEvent(i * BAR_TICKS + st * STEP_TICKS + s * 36, 900, n, vel(v, gb) - s * 3)) }
                     }
                 }
                 if (gn.isNotEmpty()) guitarClips.add(Clip(nid(), bar, BLOCK_BARS, gn.sortedBy { it.start }))
             }
-            // Bass đánh gốc hợp âm của giọng (chỉ khi bám giai điệu; rap thì dùng bass của Looper)
-            if (follow && sec != Section.INTRO) {
+
+            // Bass đánh gốc hợp âm của giọng (không ở intro). Rap không có giai điệu: Looper đã có bass nên bass riêng chỉ ở chorus.
+            if (sec != Section.INTRO && (follow || sec == Section.CHORUS)) {
                 val bn = ArrayList<NoteEvent>()
+                val bPat = pickPattern(bassPatterns, profile, bar, rnd, 0.5)
+                val bSteps = steps(bPat)
                 for (i in 0 until BLOCK_BARS) {
                     val gb = bar + i
-                    val c = chords[gb.coerceAtMost(chords.size - 1)]
+                    val c = chordAt(gb)
                     var m = 24 + Math.floorMod(key + c.root, 12)
                     if (m < 31) m += 12
-                    bn.add(NoteEvent(i * BAR_TICKS, 1800, m, vel(88, gb)))
-                    bn.add(NoteEvent(i * BAR_TICKS + 1920, if (sec == Section.CHORUS) 900 else 1700, m, vel(76, gb)))
-                    if (sec == Section.CHORUS) bn.add(NoteEvent(i * BAR_TICKS + 3360, 360, m, vel(70, gb)))
+                    for ((si, st) in bSteps.withIndex()) {
+                        val nextSt = bSteps.getOrNull(si + 1) ?: 16
+                        bn.add(NoteEvent(i * BAR_TICKS + st * STEP_TICKS, ((nextSt - st).coerceAtMost(8)) * STEP_TICKS - 80, m, vel(if (st == 0) 88 else 72, gb)))
+                    }
                 }
                 bassClips.add(Clip(nid(), bar, BLOCK_BARS, bn))
             }
+
             // Drum pad: clap phách 2 và 4 + crash đầu khối ở chorus
             if (sec == Section.CHORUS) {
                 val dn = ArrayList<NoteEvent>()
@@ -298,6 +492,6 @@ object Arranger {
         add(Instrument.ACOUSTIC, "Guitar", 0.36f, 0.25f, guitarClips)
         add(Instrument.BASS, "Bass theo giọng", 0.55f, 0f, bassClips)
         add(Instrument.DRUM_PAD, "Clap & crash", 0.4f, 0f, padClips)
-        return p.copy(tracks = keep + made, nextId = nextId, arrangeGenre = genre.id)
+        return p.copy(tracks = keep + made, nextId = nextId, arrangeGenre = genre.id, arrangeSeed = seed)
     }
 }
