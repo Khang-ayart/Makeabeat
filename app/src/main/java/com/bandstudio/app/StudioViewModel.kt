@@ -208,7 +208,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     fun poll() {
         if (screen is Screen.Launcher) pollLauncher()
         pollVocal()
-        if (!playing) return
+        if (!playing || scrubbing) return
         if (AudioEngine.isPlaying()) {
             playheadTick = (AudioEngine.beatPosition() * PPQ).toInt().coerceAtLeast(0)
         } else if (System.nanoTime() > graceUntilNanos) {
@@ -219,6 +219,26 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun seekToBar(bar: Int) = seekToTick(bar.coerceIn(0, MAX_BARS) * BAR_TICKS)
+
+    /** Đang kéo thanh chạy: chỉ di chuyển đầu phát trên màn hình, nhả tay mới nhảy engine tới đó (tránh giật tiếng khi kéo). */
+    var scrubbing by mutableStateOf(false)
+        private set
+
+    fun scrubTo(tick: Int) {
+        scrubbing = true
+        cursorTick = tick.coerceIn(0, MAX_BARS * BAR_TICKS)
+        playheadTick = cursorTick
+    }
+
+    /** Nhả tay: đang phát thì phát tiếp ngay từ chỗ vừa chọn. */
+    fun scrubEnd() {
+        if (!scrubbing) return
+        scrubbing = false
+        if (playing) {
+            AudioEngine.play(cursorTick)
+            graceUntilNanos = System.nanoTime() + 400_000_000L
+        }
+    }
 
     /** Đặt đầu phát tới [tick] bất kỳ (kéo thanh chạy trên thước); đang phát thì phát tiếp từ đó. */
     fun seekToTick(tick: Int) {

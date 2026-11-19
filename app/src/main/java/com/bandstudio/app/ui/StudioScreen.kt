@@ -49,6 +49,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -194,6 +195,16 @@ private fun Timeline(vm: StudioViewModel, project: Project, onAddTrack: () -> Un
     val vScroll = rememberScrollState()
     val hScroll = rememberScrollState()
     val laneWidth = BarW * barCount
+    var viewportPx by remember { mutableStateOf(0) }
+    val barPx = with(LocalDensity.current) { BarW.toPx() }
+    // Đang phát: timeline tự cuộn theo đầu phát để luôn thấy chỗ đang nghe.
+    val headTick = if (vm.playing) vm.playheadTick else -1
+    androidx.compose.runtime.LaunchedEffect(headTick / (BAR_TICKS / 4)) {
+        if (headTick >= 0 && !vm.scrubbing && viewportPx > 0) {
+            val x = (headTick / BAR_TICKS.toFloat() * barPx).toInt()
+            if (x < hScroll.value + 40 || x > hScroll.value + viewportPx - 60) hScroll.scrollTo((x - viewportPx / 4).coerceAtLeast(0))
+        }
+    }
 
     Row(Modifier.fillMaxSize()) {
         // Cột tên track cố định bên trái, cuộn dọc cùng với các lane.
@@ -207,7 +218,7 @@ private fun Timeline(vm: StudioViewModel, project: Project, onAddTrack: () -> Un
             }
         }
         // Timeline cuộn ngang.
-        Column(Modifier.weight(1f).horizontalScroll(hScroll)) {
+        Column(Modifier.weight(1f).onSizeChanged { viewportPx = it.width }.horizontalScroll(hScroll)) {
             Ruler(vm, barCount)
             Box(Modifier.weight(1f)) {
                 Column(Modifier.width(laneWidth).fillMaxHeight().verticalScroll(vScroll)) {
@@ -264,17 +275,19 @@ private fun AddTrackButton(onClick: () -> Unit) {
 private fun Ruler(vm: StudioViewModel, barCount: Int) {
     val barPx = with(LocalDensity.current) { BarW.toPx() }
     // Chạm hoặc kéo trên thước để đặt đầu phát; làm tròn 1/32 nhịp (120 tick) để cắt cho chuẩn.
-    val seek = { x: Float -> vm.seekToTick((Math.round(x / barPx * BAR_TICKS / 120f) * 120).coerceIn(0, barCount * BAR_TICKS)) }
+    val snap = { x: Float -> (Math.round(x / barPx * BAR_TICKS / 120f) * 120).coerceIn(0, barCount * BAR_TICKS) }
     Row(
         Modifier
             .width(BarW * barCount)
             .height(RulerH)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .pointerInput(barCount) { detectTapGestures { off -> seek(off.x) } }
+            .pointerInput(barCount) { detectTapGestures { off -> vm.seekToTick(snap(off.x)) } }
             .pointerInput(barCount) {
                 detectHorizontalDragGestures(
-                    onDragStart = { off -> seek(off.x) },
-                    onHorizontalDrag = { change, _ -> change.consume(); seek(change.position.x) },
+                    onDragStart = { off -> vm.scrubTo(snap(off.x)) },
+                    onHorizontalDrag = { change, _ -> change.consume(); vm.scrubTo(snap(change.position.x)) },
+                    onDragEnd = { vm.scrubEnd() },
+                    onDragCancel = { vm.scrubEnd() },
                 )
             },
     ) {
@@ -415,11 +428,39 @@ private fun MiniNotes(clip: Clip, inst: Instrument, color: Color) {
 
 @Composable
 private fun Playhead(vm: StudioViewModel, width: Dp) {
-    val barPx = with(LocalDensity.current) { BarW.toPx() }
-    Canvas(Modifier.width(width).fillMaxHeight()) {
+    val density = LocalDensity.current
+    val barPx = with(density) { BarW.toPx() }
+    val handle = 36.dp
+    Box(Modifier.width(width).fillMaxHeight()) {
+        Canvas(Modifier.matchParentSize()) {
+            val tick = if (vm.playing) vm.playheadTick else vm.cursorTick
+            val x = tick / BAR_TICKS.toFloat() * barPx
+            drawLine(Color(0xFFFF5C5C), Offset(x, 0f), Offset(x, size.height), 2.dp.toPx())
+        }
+        // Tay nắm kéo được: kéo ngang để đưa đầu phát tới bất kỳ đâu (làm tròn 1/32 nhịp); đang phát thì nhả tay là nghe ngay từ đó.
         val tick = if (vm.playing) vm.playheadTick else vm.cursorTick
-        val x = tick / BAR_TICKS.toFloat() * barPx
-        drawLine(Color(0xFFFF5C5C), Offset(x, 0f), Offset(x, size.height), 2.dp.toPx())
+        val xDp = with(density) { (tick / BAR_TICKS.toFloat() * barPx).toDp() }
+        Box(
+            Modifier
+                .offset(x = xDp - handle / 2)
+                .size(handle, handle)
+                .pointerInput(Unit) {
+                    var acc = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { acc = (if (vm.playing) vm.playheadTick else vm.cursorTick) / BAR_TICKS.toFloat() * barPx },
+                        onHorizontalDrag = { change, dx ->
+                            change.consume()
+                            acc += dx
+                            vm.scrubTo((Math.round(acc / barPx * BAR_TICKS / 120f) * 120))
+                        },
+                        onDragEnd = { vm.scrubEnd() },
+                        onDragCancel = { vm.scrubEnd() },
+                    )
+                },
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Box(Modifier.padding(top = 2.dp).size(18.dp).clip(CircleShape).background(Color(0xFFFF5C5C)))
+        }
     }
 }
 
@@ -572,6 +613,20 @@ private fun ImportDialog(onDone: (asVocal: Boolean, srcBpm: Int) -> Unit, onCanc
 private fun TransportBar(vm: StudioViewModel, project: Project) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            // Thanh vị trí cả bài: kéo tới đoạn nào là nghe đoạn đó (đang phát thì nhả tay là phát ngay từ đó).
+            val totalTicks = (maxOf(project.endBar, 4) * BAR_TICKS).toFloat()
+            val head = if (vm.playing || vm.scrubbing) vm.playheadTick else vm.cursorTick
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(formatClock(com.bandstudio.app.model.tickToMs(head, project.bpm)), style = MaterialTheme.typography.labelMedium)
+                Slider(
+                    value = head.toFloat().coerceIn(0f, totalTicks),
+                    onValueChange = { vm.scrubTo((Math.round(it / 120f) * 120)) },
+                    onValueChangeFinished = vm::scrubEnd,
+                    valueRange = 0f..totalTicks,
+                    modifier = Modifier.weight(1f).height(28.dp),
+                )
+                Text(formatClock(com.bandstudio.app.model.tickToMs(totalTicks.toInt(), project.bpm)), style = MaterialTheme.typography.labelMedium)
+            }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 RoundButton(onClick = { vm.seekToBar(0) }) { RewindGlyph(Modifier.size(22.dp)) }
                 RoundButton(onClick = vm::togglePlay, size = 54.dp, color = MaterialTheme.colorScheme.primary) {
