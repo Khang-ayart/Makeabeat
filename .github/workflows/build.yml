@@ -17,6 +17,9 @@ jobs:
           g++ -std=c++17 -O2 -Wall -Wextra -Iapp/src/main/cpp \
             native-tests/core_test.cpp app/src/main/cpp/engine_core.cpp app/src/main/cpp/noise_reducer.cpp -o core_test
           ./core_test
+          g++ -std=c++17 -O2 -Wall -Wextra -fsanitize=address,undefined -Iapp/src/main/cpp \
+            native-tests/vocal_test.cpp app/src/main/cpp/vocal_dsp.cpp -o vocal_test
+          ./vocal_test
 
   apk:
     needs: native-tests

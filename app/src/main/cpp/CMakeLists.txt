@@ -9,6 +9,7 @@ find_package(oboe REQUIRED CONFIG)
 add_library(bandaudio SHARED
         engine_core.cpp
         noise_reducer.cpp
+        vocal_dsp.cpp
         audio_engine.cpp
         jni_bridge.cpp)
 
