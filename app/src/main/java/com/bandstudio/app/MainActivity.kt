@@ -73,6 +73,7 @@ private fun AppRoot(vm: StudioViewModel) {
         SplashScreen { splash = false }
         return
     }
+    LaunchedEffect(Unit) { vm.updates.checkOnStart() }
     when (vm.screen) {
         Screen.Home -> HomeScreen(vm)
         Screen.Studio -> StudioScreen(vm)

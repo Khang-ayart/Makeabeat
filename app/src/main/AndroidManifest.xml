@@ -2,11 +2,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        CỐ Ý không khai báo quyền INTERNET: ứng dụng không thể gửi dữ liệu ra ngoài.
         Quyền RECORD_AUDIO chỉ để thu giọng hát; bản thu nằm trong bộ nhớ riêng của ứng dụng, không rời máy.
     -->
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
+        Mạng CHỈ dùng để kiểm tra / tải bản cập nhật từ GitHub Releases của dự án (không gửi bất kỳ dữ liệu người dùng nào).
+        Mọi tính năng làm nhạc vẫn chạy hoàn toàn offline. Cài bản mới qua trình cài đặt của Android (cần người dùng cho phép).
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
@@ -25,6 +33,10 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Makeabeat">
+
+        <receiver
+            android:name=".update.InstallResultReceiver"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"

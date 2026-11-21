@@ -77,6 +77,9 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = ProjectStore(File(app.filesDir, "projects"))
 
+    /** Kiểm tra / tải / cài bản cập nhật từ GitHub Releases (xem update/). */
+    val updates = com.bandstudio.app.update.UpdateController(app, viewModelScope)
+
     var screen by mutableStateOf<Screen>(Screen.Home)
         private set
     var projects by mutableStateOf<List<Project>>(emptyList())

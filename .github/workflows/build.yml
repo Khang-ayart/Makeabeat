@@ -5,6 +5,15 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Phát hành bản này lên GitHub Releases (bản nhánh = bản thử nghiệm)"
+        type: boolean
+        default: false
+
+# Cần để tạo GitHub Release chứa APK (app kiểm tra cập nhật ở đó).
+permissions:
+  contents: write
 
 jobs:
   # Kiểm thử lõi âm thanh (nhịp chính xác, không trôi, voice, hàng đợi) trước khi dựng APK.
@@ -43,11 +52,57 @@ jobs:
         with:
           gradle-version: 8.9
 
+      # Khóa ký lấy từ GitHub Secrets (MAKEABEAT_KEYSTORE_B64, MAKEABEAT_KEYSTORE_PASSWORD, MAKEABEAT_KEY_ALIAS, MAKEABEAT_KEY_PASSWORD).
+      # Không có secrets thì ký debug (chỉ để thử, không phát hành).
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.MAKEABEAT_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "MAKEABEAT_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "HAVE_KEY=true" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Chưa có khóa ký (secrets). APK ký debug, sẽ không được phát hành và không cài đè lên bản chính thức."
+            echo "HAVE_KEY=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Unit tests + build release APK
-        run: gradle testDebugUnitTest assembleRelease --stacktrace
+        env:
+          MAKEABEAT_KEYSTORE_PASSWORD: ${{ secrets.MAKEABEAT_KEYSTORE_PASSWORD }}
+          MAKEABEAT_KEY_ALIAS: ${{ secrets.MAKEABEAT_KEY_ALIAS }}
+          MAKEABEAT_KEY_PASSWORD: ${{ secrets.MAKEABEAT_KEY_PASSWORD }}
+        run: gradle testDebugUnitTest assembleRelease -PversionCode=${{ github.run_number }} -PversionName=0.2.${{ github.run_number }} --stacktrace
+
+      - name: Name APK and show signing certificate
+        id: apk
+        run: |
+          VER="0.2.${{ github.run_number }}"
+          cp app/build/outputs/apk/release/*.apk "Makeabeat-v$VER.apk"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "sha=$(sha256sum "Makeabeat-v$VER.apk" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs "Makeabeat-v$VER.apk" | grep -i "SHA-256" || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BandStudio-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: Makeabeat-apk
+          path: Makeabeat-v*.apk
           if-no-files-found: error
+
+      # Bản main = bản chính thức; bản từ nhánh khác (chạy tay với publish=true) = bản thử nghiệm (prerelease).
+      - name: Publish GitHub Release
+        if: env.HAVE_KEY == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.publish == true)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${{ steps.apk.outputs.ver }}"
+          PRE=""
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then PRE="--prerelease"; fi
+          {
+            echo "versionCode: ${{ github.run_number }}"
+            echo "sha256: ${{ steps.apk.outputs.sha }}"
+            echo "branch: ${{ github.ref_name }}"
+            echo "commit: ${{ github.sha }}"
+          } > notes.txt
+          gh release create "v$VER" "Makeabeat-v$VER.apk" --title "Makeabeat $VER" --notes-file notes.txt --target "${{ github.sha }}" $PRE

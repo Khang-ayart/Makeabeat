@@ -13,8 +13,9 @@ android {
         applicationId = "com.bandstudio.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI truyền số lần chạy làm versionCode (luôn tăng) để các bản cài đè lên nhau và để app so sánh phiên bản khi kiểm tra cập nhật.
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "0.2.0-dev"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -34,12 +35,23 @@ android {
         }
     }
 
+    // Khóa ký cố định cho mọi bản phát hành (để cài đè / cập nhật được). CI giải mã khóa từ GitHub Secrets và đặt các biến môi trường
+    // này; không có khóa (máy khác, PR từ fork) thì ký bằng khóa debug để vẫn dựng được, nhưng bản đó KHÔNG cập nhật đè lên bản chính thức.
+    val releaseKeystore = System.getenv("MAKEABEAT_KEYSTORE")?.takeIf { it.isNotBlank() }?.let { File(it) }
+    if (releaseKeystore != null && releaseKeystore.exists()) {
+        signingConfigs {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = System.getenv("MAKEABEAT_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("MAKEABEAT_KEY_ALIAS")
+                keyPassword = System.getenv("MAKEABEAT_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Ký tạm bằng khóa debug để APK cài được ngay khi chạy thử.
-            // Khi phát hành thật, thay bằng khóa riêng của bạn.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

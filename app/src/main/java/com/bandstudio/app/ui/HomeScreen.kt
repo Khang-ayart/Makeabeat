@@ -53,11 +53,13 @@ fun HomeScreen(vm: StudioViewModel) {
         Spacer(Modifier.height(20.dp))
         Text("Makeabeat", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text(
-            "Phòng thu trong túi bạn. Không cần mạng, không tài khoản, không quảng cáo.",
+            "Phòng thu trong túi bạn. Làm nhạc hoàn toàn offline, không tài khoản, không quảng cáo.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
+        UpdateCard(vm.updates)
+        Spacer(Modifier.height(12.dp))
         Button(onClick = vm::newProject, modifier = Modifier.fillMaxWidth()) {
             Text("+  Tạo bản nhạc mới")
         }
@@ -95,6 +97,69 @@ fun HomeScreen(vm: StudioViewModel) {
             },
             dismissButton = { TextButton(onClick = { toDelete = null }) { Text("Hủy") } },
         )
+    }
+}
+
+/** Phiên bản đang dùng, trạng thái cập nhật và nút thao tác; các tùy chọn tự động nằm trong phần mở rộng. */
+@Composable
+private fun UpdateCard(u: com.bandstudio.app.update.UpdateController) {
+    var open by remember { mutableStateOf(false) }
+    val st = u.state
+    val err = com.bandstudio.app.update.InstallResultReceiver.lastError
+    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Phiên bản ${u.versionName}", style = MaterialTheme.typography.titleSmall)
+                    val line = when (st) {
+                        is com.bandstudio.app.update.UpdateController.State.Idle -> "Chưa kiểm tra cập nhật."
+                        is com.bandstudio.app.update.UpdateController.State.Checking -> "Đang kiểm tra…"
+                        is com.bandstudio.app.update.UpdateController.State.UpToDate -> "Bạn đang dùng bản mới nhất."
+                        is com.bandstudio.app.update.UpdateController.State.Available ->
+                            "Có bản mới ${st.info.versionName}" + (if (st.info.prerelease) " (thử nghiệm)" else "") +
+                                (if (st.info.size > 0) " • ${"%.1f".format(st.info.size / 1048576.0)} MB" else "")
+                        is com.bandstudio.app.update.UpdateController.State.Downloading -> "Đang tải bản ${st.info.versionName}: ${(st.progress * 100).toInt()}%"
+                        is com.bandstudio.app.update.UpdateController.State.Ready -> "Đã tải bản ${st.info.versionName}, sẵn sàng cài."
+                        is com.bandstudio.app.update.UpdateController.State.Error -> st.message
+                    }
+                    Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                when (st) {
+                    is com.bandstudio.app.update.UpdateController.State.Available -> Button(onClick = { u.download(st.info) }) { Text("Tải") }
+                    is com.bandstudio.app.update.UpdateController.State.Ready -> Button(onClick = u::install) { Text("Cài đặt") }
+                    is com.bandstudio.app.update.UpdateController.State.Checking, is com.bandstudio.app.update.UpdateController.State.Downloading -> Unit
+                    else -> TextButton(onClick = { u.check(manual = true) }) { Text("Kiểm tra") }
+                }
+            }
+            if (st is com.bandstudio.app.update.UpdateController.State.Downloading) {
+                androidx.compose.material3.LinearProgressIndicator(progress = { st.progress }, modifier = Modifier.fillMaxWidth())
+            }
+            u.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            if (err != null) Text(
+                "Cài đặt không thành công: $err" + "\nNếu báo xung đột / chữ ký: bản đang cài dùng khóa ký khác, cần gỡ app rồi cài lại bản mới một lần.",
+                style = MaterialTheme.typography.bodySmall, color = Color(0xFFFF8A80),
+            )
+            TextButton(onClick = { open = !open }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text(if (open) "Ẩn cài đặt cập nhật" else "Cài đặt cập nhật")
+            }
+            if (open) {
+                SwitchRow("Tự kiểm tra và tải bản mới", u.auto, u::setAuto)
+                SwitchRow("Chỉ tải khi có Wi-Fi", u.wifiOnly, u::setWifiOnly)
+                SwitchRow("Nhận cả bản thử nghiệm", u.includePrerelease, u::setIncludePrerelease)
+                Text(
+                    "Mạng chỉ dùng để hỏi GitHub có bản mới không và tải bản đó; không gửi bất kỳ dữ liệu nào của bạn. Android luôn hỏi xác nhận trước khi cài.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        androidx.compose.material3.Switch(checked = value, onCheckedChange = onChange)
     }
 }
 
