@@ -93,7 +93,7 @@ class ModelTest {
         assertFalse(t.isFree(1, 2))
         assertTrue(t.isFree(4, 1))
         assertTrue(t.isFree(2, 2, ignoreId = 7)) // chính clip đó thì được bỏ qua
-        assertFalse(t.isFree(63, 2))
+        assertFalse(t.isFree(MAX_BARS - 1, 2))
     }
 
     // ---- Looper: danh mục âm và thể loại ----------------------------------------------
