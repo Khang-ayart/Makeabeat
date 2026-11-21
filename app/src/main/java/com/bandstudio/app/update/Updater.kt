@@ -1,5 +1,7 @@
 package com.bandstudio.app.update
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -144,6 +146,6 @@ class InstallResultReceiver : BroadcastReceiver() {
 
     companion object {
         /** Lỗi cài đặt gần nhất (ví dụ chữ ký không khớp bản đang cài); màn Home đọc và hiển thị. */
-        var lastError by androidx.compose.runtime.mutableStateOf<String?>(null)
+        var lastError: String? by androidx.compose.runtime.mutableStateOf<String?>(null)
     }
 }
