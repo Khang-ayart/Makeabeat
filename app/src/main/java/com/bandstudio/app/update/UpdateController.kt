@@ -41,9 +41,9 @@ class UpdateController(private val app: Application, private val scope: Coroutin
 
     val versionName: String get() = Updater.currentVersionName(app)
 
-    fun setAuto(v: Boolean) { auto = v; prefs.edit().putBoolean("auto", v).apply() }
-    fun setWifiOnly(v: Boolean) { wifiOnly = v; prefs.edit().putBoolean("wifiOnly", v).apply() }
-    fun setIncludePrerelease(v: Boolean) {
+    fun updateAuto(v: Boolean) { auto = v; prefs.edit().putBoolean("auto", v).apply() }
+    fun updateWifiOnly(v: Boolean) { wifiOnly = v; prefs.edit().putBoolean("wifiOnly", v).apply() }
+    fun updateIncludePrerelease(v: Boolean) {
         includePrerelease = v; prefs.edit().putBoolean("pre", v).apply()
         state = State.Idle
     }

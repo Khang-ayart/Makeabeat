@@ -143,9 +143,9 @@ private fun UpdateCard(u: com.bandstudio.app.update.UpdateController) {
                 Text(if (open) "Ẩn cài đặt cập nhật" else "Cài đặt cập nhật")
             }
             if (open) {
-                SwitchRow("Tự kiểm tra và tải bản mới", u.auto, u::setAuto)
-                SwitchRow("Chỉ tải khi có Wi-Fi", u.wifiOnly, u::setWifiOnly)
-                SwitchRow("Nhận cả bản thử nghiệm", u.includePrerelease, u::setIncludePrerelease)
+                SwitchRow("Tự kiểm tra và tải bản mới", u.auto, u::updateAuto)
+                SwitchRow("Chỉ tải khi có Wi-Fi", u.wifiOnly, u::updateWifiOnly)
+                SwitchRow("Nhận cả bản thử nghiệm", u.includePrerelease, u::updateIncludePrerelease)
                 Text(
                     "Mạng chỉ dùng để hỏi GitHub có bản mới không và tải bản đó; không gửi bất kỳ dữ liệu nào của bạn. Android luôn hỏi xác nhận trước khi cài.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
