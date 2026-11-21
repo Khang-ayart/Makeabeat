@@ -16,6 +16,9 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
     put("arrGenre", arrangeGenre)
     put("follow", followMelody)
     put("arrSeed", arrangeSeed)
+    put("targetSec", targetSeconds)
+    put("preset", structurePreset)
+    put("struct", JSONArray().also { a -> for (x in structure) a.put(JSONArray().put(x.type.name).put(x.bars)) })
     put("sources", JSONArray().also { a ->
         for (x in sources) a.put(JSONObject().apply {
             put("id", x.id); put("name", x.name); put("file", x.file); put("rate", x.sampleRate)
@@ -160,6 +163,15 @@ fun projectFromJson(o: JSONObject): Project {
         arrangeGenre = o.optString("arrGenre", "hiphop"),
         followMelody = o.optBoolean("follow", false),
         arrangeSeed = o.optInt("arrSeed", 0),
+        targetSeconds = o.optInt("targetSec", 0).coerceIn(0, 3600),
+        structurePreset = o.optString("preset", "standard"),
+        structure = (o.optJSONArray("struct") ?: JSONArray()).let { a ->
+            (0 until minOf(a.length(), 64)).mapNotNull { i ->
+                val e = a.optJSONArray(i) ?: return@mapNotNull null
+                val t = Structure.typeOf(e.optString(0)) ?: return@mapNotNull null
+                SongSection(t, e.optInt(1, t.defaultBars).coerceIn(Structure.UNIT, MAX_BARS))
+            }
+        },
     )
 }
 

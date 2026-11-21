@@ -12,6 +12,9 @@ import androidx.lifecycle.viewModelScope
 import com.bandstudio.app.audio.AudioEngine
 import com.bandstudio.app.audio.AudioDecoder
 import com.bandstudio.app.model.AudioEdit
+import com.bandstudio.app.model.SectionType
+import com.bandstudio.app.model.SongSection
+import com.bandstudio.app.model.Structure
 import com.bandstudio.app.model.VocalEdit
 import com.bandstudio.app.model.tickToMs
 import com.bandstudio.app.model.AudioSource
@@ -262,7 +265,11 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setBpm(value: Int) {
         val bpm = value.coerceIn(40, 240)
-        update { it.copy(bpm = bpm) }
+        update { p ->
+            // Đã chọn thời lượng: đổi BPM thì số ô đổi theo, co giãn lại cấu trúc cho đúng thời lượng đó.
+            val st = if (p.targetSeconds > 0 && p.structure.isNotEmpty()) Structure.fit(p.structure, Structure.barsForSeconds(p.targetSeconds, bpm)) else p.structure
+            p.copy(bpm = bpm, structure = st)
+        }
         AudioEngine.setBpm(bpm.toFloat())
         restretchAudioSoon()
     }
@@ -1326,16 +1333,78 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     fun setArrangeOptions(genreId: String? = null, followMelody: Boolean? = null) =
         update { it.copy(arrangeGenre = genreId ?: it.arrangeGenre, followMelody = followMelody ?: it.followMelody) }
 
-    /** Dựng Looper + Piano + Guitar + Drum Pad theo BPM, tông, thể loại hiện tại rồi phát ngay từ đầu. */
+    // ---- Cấu trúc & thời lượng ----
+
+    /** Cấu trúc đang áp dụng: đã chọn thì dùng, chưa thì mẫu đang chọn co giãn cho khoảng 2:30. */
+    fun effectiveStructure(p: Project): List<SongSection> =
+        if (p.structure.isNotEmpty()) p.structure
+        else Structure.plan(p.structurePreset.ifEmpty { "standard" }, Structure.barsForSeconds(if (p.targetSeconds > 0) p.targetSeconds else 150, p.bpm))
+
+    private fun targetBars(p: Project): Int =
+        if (p.targetSeconds > 0) Structure.barsForSeconds(p.targetSeconds, p.bpm) else Structure.totalBars(effectiveStructure(p))
+
+    fun setStructurePreset(id: String) = update { p -> p.copy(structurePreset = id, structure = Structure.plan(id, targetBars(p))) }
+
+    /** [seconds] > 0: cố định thời lượng (cấu trúc co giãn cho vừa); 0: theo độ dài giọng (không có giọng thì theo cấu trúc). */
+    fun setTargetSeconds(seconds: Int) = update { p ->
+        val st = effectiveStructure(p)
+        p.copy(targetSeconds = seconds, structure = if (seconds > 0) Structure.fit(st, Structure.barsForSeconds(seconds, p.bpm)) else st)
+    }
+
+    private fun editStructure(f: (List<SongSection>) -> List<SongSection>) = update { p ->
+        val st = f(effectiveStructure(p)).take(48)
+        // sửa tay: thời lượng thành đúng tổng đã sửa, không còn là mẫu
+        p.copy(structure = st, structurePreset = "", targetSeconds = Structure.secondsOf(Structure.totalBars(st), p.bpm))
+    }
+
+    fun resizeSection(i: Int, deltaBars: Int) = editStructure { st ->
+        st.mapIndexed { k, s -> if (k == i) s.copy(bars = (s.bars + deltaBars).coerceIn(s.type.minBars, s.type.maxBars)) else s }
+            .let { out -> if (Structure.totalBars(out) > MAX_BARS) st else out }
+    }
+    fun moveSection(i: Int, dir: Int) = editStructure { st ->
+        val j = i + dir
+        if (i !in st.indices || j !in st.indices) st else st.toMutableList().also { val t = it[i]; it[i] = it[j]; it[j] = t }
+    }
+    fun removeSection(i: Int) = editStructure { st -> if (st.size <= 1 || i !in st.indices) st else st.filterIndexed { k, _ -> k != i } }
+    fun addSection(type: SectionType) = editStructure { st ->
+        if (Structure.totalBars(st) + type.defaultBars > MAX_BARS) st
+        else {
+            val at = if (st.lastOrNull()?.type == SectionType.OUTRO && type != SectionType.OUTRO) st.size - 1 else st.size
+            st.toMutableList().also { it.add(at, SongSection(type, type.defaultBars)) }
+        }
+    }
+
+    /** Có nhạc nhập vào (beat có sẵn) trên timeline? Khi đó "Tạo beat" không dựng nhạc mà chỉ đánh dấu đoạn + vòng đệm. */
+    fun hasImportedBeat(p: Project): Boolean = p.tracks.any { it.instrument.isAudio && it.audio.isNotEmpty() }
+
+    /**
+     * Dựng Looper + Piano + Guitar + Drum Pad theo BPM, tông, thể loại và cấu trúc hiện tại rồi phát ngay từ đầu.
+     * Có giọng và thời lượng "theo giọng": cấu trúc co giãn vừa giọng, giọng được dời tới đầu đoạn sau intro và nhạc phủ hết giọng + outro.
+     */
     fun arrangeBeat() {
         val p = project ?: return
         val genre = Catalog.genre(p.arrangeGenre) ?: Catalog.genres.first()
         val clip = vocalClip()
-        val vocalBars = clip?.bars(p.bpm) ?: 8
         if (vocalBusy) return
         stopPlayback()
         viewModelScope.launch {
             vocalBusy = true
+            var struct = effectiveStructure(p)
+            val barMs = 240000.0 / p.bpm
+            var shiftMs = 0
+            if (clip != null && p.targetSeconds == 0) {
+                val segs = clip.segments()
+                if (segs.isNotEmpty()) {
+                    val intro = struct.firstOrNull()?.takeIf { it.type == SectionType.INTRO }?.bars ?: 0
+                    val first = segs.minOf { it.atMs }
+                    val end = segs.maxOf { it.endMs }
+                    val outro = struct.lastOrNull()?.takeIf { it.type == SectionType.OUTRO }?.bars ?: Structure.UNIT
+                    shiftMs = (intro * barMs).toInt() - first
+                    val vocalBars = Math.ceil((end - first) / barMs).toInt()
+                    struct = Structure.fit(struct, intro + vocalBars + outro)
+                }
+            }
+            val eff = (clip?.startMs ?: 0) - shiftMs   // vị trí trong bản thu của giây 0 của bài, sau khi dời giọng
             // Dò cao độ một lần: dùng cho hợp âm bám giọng (cả hai chế độ) và cho giai điệu (chế độ "theo giai điệu").
             val hz = withContext(Dispatchers.Default) {
                 val x = vocalSamples
@@ -1343,22 +1412,38 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             }
             val melody = if (p.followMelody && clip != null && hz.isNotEmpty()) {
                 withContext(Dispatchers.Default) {
-                    Arranger.melodyFromPitch(hz, AudioEngine.vocalPitchHop(clip.sampleRate), clip.sampleRate, clip.startMs, p.bpm, p.keyRoot, p.minor)
+                    Arranger.melodyFromPitch(hz, AudioEngine.vocalPitchHop(clip.sampleRate), clip.sampleRate, eff, p.bpm, p.keyRoot, p.minor)
                 }
             } else emptyList()
+            val totalBars = Structure.totalBars(struct)
             val profile = withContext(Dispatchers.Default) {
                 val x = vocalSamples
                 if (x == null || clip == null) null
-                else Arranger.vocalProfile(x, clip.sampleRate, clip.startMs, p.bpm, Arranger.totalBars(vocalBars), hz, AudioEngine.vocalPitchHop(clip.sampleRate))
+                else Arranger.vocalProfile(x, clip.sampleRate, eff, p.bpm, totalBars, hz, AudioEngine.vocalPitchHop(clip.sampleRate))
             }
-            commit { cur -> Arranger.arrange(cur, genre, vocalBars, melody, profile = profile) }
+            val finalStruct = struct
+            commit { cur ->
+                val shifted = if (shiftMs != 0) VocalEdit.shiftAll(cur, shiftMs) ?: cur else cur
+                Arranger.arrange(shifted.copy(structure = finalStruct), genre, totalBars, melody, profile = profile)
+            }
             vocalBusy = false
             val n = project?.arrangeSeed ?: 1
+            val secs = Structure.secondsOf(totalBars, p.bpm)
             vocalMessage = (if (p.followMelody && melody.isEmpty()) "Không dò được giai điệu rõ ràng, nhạc đệm hợp âm theo giọng. " else "") +
-                "Bản phối #$n. Bấm Tạo beat lần nữa để ra biến thể khác."
+                "Bản phối #$n • ${secs / 60}:${"%02d".format(secs % 60)} • $totalBars ô. Bấm Tạo beat lần nữa để ra biến thể khác."
             cursorTick = 0
             startPlayback()
         }
+    }
+
+    /** Beat có sẵn: co giãn cấu trúc cho vừa độ dài beat, đánh dấu đoạn trên timeline và thêm vòng đệm đẩy hook. Không đụng tới nhạc của bạn. */
+    fun markBeatStructure() {
+        val p = project ?: return
+        val genre = Catalog.genre(p.arrangeGenre) ?: Catalog.genres.first()
+        val audioEnd = p.tracks.filter { it.instrument.isAudio }.maxOfOrNull { p.audioEndBar(it) } ?: return
+        val st = Structure.fit(effectiveStructure(p), audioEnd)
+        commit { cur -> Arranger.markAndTransition(cur.copy(targetSeconds = Structure.secondsOf(audioEnd, cur.bpm)), genre, st) }
+        vocalMessage = "Đã đánh dấu ${st.size} đoạn trên ${Structure.totalBars(st)} ô, thêm vòng đệm đẩy hook."
     }
 
 

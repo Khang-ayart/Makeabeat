@@ -93,7 +93,17 @@ fun MixerScreen(vm: StudioViewModel) {
                     ToggleChip("Đệm hợp âm (rap)", !project.followMelody, { vm.setArrangeOptions(followMelody = false) })
                     ToggleChip("Theo giai điệu (melodic/pop)", project.followMelody, { vm.setArrangeOptions(followMelody = true) })
                 }
-                Button(onClick = vm::arrangeBeat, enabled = !vm.vocalBusy, modifier = Modifier.fillMaxWidth()) {
+                StructureEditor(vm, project, hasVocal)
+                val beat = vm.hasImportedBeat(project)
+                if (beat) {
+                    Button(onClick = vm::markBeatStructure, modifier = Modifier.fillMaxWidth()) { Text("Đánh dấu đoạn + vòng đệm cho beat của bạn") }
+                    Text(
+                        "Beat nhập vào được giữ nguyên: app chia nó theo cấu trúc ở trên và thêm crash, clap dồn nhẹ để đẩy vào hook.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (beat) OutlinedButton(onClick = vm::arrangeBeat, enabled = !vm.vocalBusy, modifier = Modifier.fillMaxWidth()) { Text("Tạo thêm nhạc đệm (piano, guitar, looper)") }
+                else Button(onClick = vm::arrangeBeat, enabled = !vm.vocalBusy, modifier = Modifier.fillMaxWidth()) {
                     Text(if (vm.vocalBusy) "Đang xử lý…" else "Tạo beat")
                 }
                 vm.vocalMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
@@ -116,6 +126,50 @@ fun MixerScreen(vm: StudioViewModel) {
                 if (vm.playing) StopGlyph(Modifier.size(26.dp), Color(0xFF0B1330)) else PlayGlyph(Modifier.size(26.dp), Color(0xFF0B1330))
             }
         }
+    }
+}
+
+/** Chọn mẫu cấu trúc, thời lượng và chỉnh từng đoạn (thứ tự, số ô, thêm / xóa). Cấu trúc được dùng ngay khi bấm Tạo beat. */
+@Composable
+private fun StructureEditor(vm: StudioViewModel, project: com.bandstudio.app.model.Project, hasVocal: Boolean) {
+    val st = vm.effectiveStructure(project)
+    val names = com.bandstudio.app.model.Structure.names(st)
+    val total = com.bandstudio.app.model.Structure.totalBars(st)
+    val secs = com.bandstudio.app.model.Structure.secondsOf(total, project.bpm)
+    Text("Cấu trúc bài", style = MaterialTheme.typography.labelLarge)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+        for (pr in com.bandstudio.app.model.Structure.presets) ToggleChip(pr.label, project.structurePreset == pr.id, { vm.setStructurePreset(pr.id) })
+    }
+    Text("Thời lượng", style = MaterialTheme.typography.labelLarge)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+        if (hasVocal) ToggleChip("Theo giọng", project.targetSeconds == 0, { vm.setTargetSeconds(0) })
+        for ((label, sec) in listOf("1:30" to 90, "2:00" to 120, "2:30" to 150, "3:00" to 180, "3:30" to 210, "4:00" to 240)) {
+            ToggleChip(label, project.targetSeconds == sec, { vm.setTargetSeconds(sec) })
+        }
+    }
+    Text(
+        "Hiện tại: ${secs / 60}:${"%02d".format(secs % 60)} • $total ô" + when {
+            hasVocal && project.targetSeconds == 0 -> " • nhạc phủ hết giọng, giọng được đặt sau intro"
+            project.targetSeconds > 0 -> ""
+            else -> ""
+        },
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    for ((i, s) in st.withIndex()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            Box(Modifier.size(10.dp).clip(RoundedCornerShape(5.dp)).background(Color(s.type.color)))
+            Text(names[i], style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 8.dp).weight(1f), maxLines = 1)
+            TextButton(onClick = { vm.resizeSection(i, -4) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(32.dp)) { Text("−") }
+            Text("${s.bars} ô", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(40.dp), textAlign = TextAlign.Center)
+            TextButton(onClick = { vm.resizeSection(i, 4) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(32.dp)) { Text("+") }
+            TextButton(onClick = { vm.moveSection(i, -1) }, enabled = i > 0, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(32.dp)) { Text("↑") }
+            TextButton(onClick = { vm.moveSection(i, 1) }, enabled = i < st.size - 1, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(32.dp)) { Text("↓") }
+            TextButton(onClick = { vm.removeSection(i) }, enabled = st.size > 1, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(32.dp)) { Text("✕") }
+        }
+    }
+    Text("Thêm đoạn", style = MaterialTheme.typography.labelMedium)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+        for (t in com.bandstudio.app.model.SectionType.entries) ToggleChip("+ ${t.label}", false, { vm.addSection(t) })
     }
 }
 

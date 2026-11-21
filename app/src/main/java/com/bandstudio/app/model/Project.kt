@@ -5,7 +5,7 @@ const val BEATS_PER_BAR = 4
 const val BAR_TICKS = PPQ * BEATS_PER_BAR // 3840
 const val STEP_TICKS = PPQ / 4            // 1/16 = 240
 const val MAX_TRACKS = 8
-const val MAX_BARS = 64
+const val MAX_BARS = 192  // 4 phút ở 190 BPM
 const val MAX_CLIP_BARS = 8
 const val MAX_KIT = 32  // khớp kMaxKit
 
@@ -203,6 +203,12 @@ data class Project(
     val followMelody: Boolean = false,
     /** Số lần đã "Tạo beat": hạt giống để mỗi lần ra một biến thể khác. */
     val arrangeSeed: Int = 0,
+    /** Cấu trúc bài đã chọn (rỗng = chưa chọn, dùng mẫu "Chuẩn"). */
+    val structure: List<SongSection> = emptyList(),
+    /** Thời lượng mong muốn (giây); 0 = tự theo giọng / theo cấu trúc. */
+    val targetSeconds: Int = 0,
+    /** Mẫu cấu trúc đang chọn (id trong [Structure.presets]), "" = tự chỉnh. */
+    val structurePreset: String = "standard",
     /** Các tệp âm thanh nhập vào (dùng chung giữa các clip). */
     val sources: List<AudioSource> = emptyList(),
 ) {

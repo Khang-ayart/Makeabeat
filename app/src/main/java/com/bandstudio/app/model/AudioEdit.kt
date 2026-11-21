@@ -134,6 +134,14 @@ object VocalEdit {
         c.copy(segs = segs.map { if (it.id == s.id) it.copy(atMs = at) else it })
     }
 
+    /** Dời cả giọng đi [deltaMs] (âm = sớm hơn, không ra khỏi đầu bài). Biến bản chưa cắt thành một đoạn rõ ràng. */
+    fun shiftAll(p: Project, deltaMs: Int): Project? = p.mapVocal { c ->
+        val segs = c.segments()
+        if (segs.isEmpty() || deltaMs == 0) return@mapVocal null
+        val d = if (deltaMs < 0) maxOf(deltaMs, -segs.minOf { it.atMs }) else deltaMs
+        if (d == 0) null else c.copy(segs = segs.map { it.copy(atMs = it.atMs + d) })
+    }
+
     /** Bỏ mọi vết cắt, giọng phát nguyên bản thu. */
     fun reset(p: Project): Project? = p.mapVocal { c -> if (c.segs.isEmpty()) null else c.copy(segs = emptyList()) }
 }

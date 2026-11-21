@@ -209,7 +209,7 @@ private fun Timeline(vm: StudioViewModel, project: Project, onAddTrack: () -> Un
     Row(Modifier.fillMaxSize()) {
         // Cột tên track cố định bên trái, cuộn dọc cùng với các lane.
         Column(Modifier.width(HeaderW)) {
-            Spacer(Modifier.height(RulerH))
+            Spacer(Modifier.height(RulerH + if (project.structure.isNotEmpty()) 20.dp else 0.dp))
             Column(Modifier.weight(1f).verticalScroll(vScroll)) {
                 for (t in project.tracks) {
                     TrackHeader(t, onClick = { onTrack(t.id) }, onMute = { vm.toggleMute(t.id) }, onSolo = { vm.toggleSolo(t.id) })
@@ -220,6 +220,7 @@ private fun Timeline(vm: StudioViewModel, project: Project, onAddTrack: () -> Un
         // Timeline cuộn ngang.
         Column(Modifier.weight(1f).onSizeChanged { viewportPx = it.width }.horizontalScroll(hScroll)) {
             Ruler(vm, barCount)
+            SectionStrip(project, barCount)
             Box(Modifier.weight(1f)) {
                 Column(Modifier.width(laneWidth).fillMaxHeight().verticalScroll(vScroll)) {
                     for (t in project.tracks) Lane(vm, t, barCount, project.bpm)
@@ -268,6 +269,23 @@ private fun AddTrackButton(onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Text("+ Thêm track", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+/** Dải nhãn đoạn (Intro, Verse, Hook…) dưới thước, đúng theo cấu trúc đã chọn. Không có cấu trúc thì ẩn. */
+@Composable
+private fun SectionStrip(project: Project, barCount: Int) {
+    if (project.structure.isEmpty()) return
+    val names = com.bandstudio.app.model.Structure.names(project.structure)
+    Row(Modifier.width(BarW * barCount).height(20.dp)) {
+        for ((i, s) in project.structure.withIndex()) {
+            val c = Color(s.type.color)
+            Box(
+                Modifier.width(BarW * s.bars).fillMaxHeight().padding(horizontal = 1.dp)
+                    .clip(RoundedCornerShape(4.dp)).background(c.copy(alpha = 0.35f)),
+                contentAlignment = Alignment.CenterStart,
+            ) { Text(names[i], Modifier.padding(horizontal = 6.dp), style = MaterialTheme.typography.labelSmall, maxLines = 1, color = MaterialTheme.colorScheme.onSurface) }
+        }
     }
 }
 

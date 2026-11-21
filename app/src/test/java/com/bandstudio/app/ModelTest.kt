@@ -795,4 +795,64 @@ class ModelTest {
         }
         assertTrue("piano trùng quá nhiều vào âm tiết của giọng: $onBeat/$all", onBeat < all * 0.8)
     }
+
+    @Test
+    fun structureFitHitsTargetWithinOneUnitAndRespectsLimits() {
+        for (pr in com.bandstudio.app.model.Structure.presets) for (bars in listOf(24, 48, 72, 104, 140, 190)) {
+            val out = com.bandstudio.app.model.Structure.fit(com.bandstudio.app.model.Structure.defaults(pr.types), bars)
+            val lo = pr.types.sumOf { it.minBars }; val hi = pr.types.sumOf { it.maxBars }
+            val goal = bars.coerceIn(lo, hi)
+            assertTrue("${pr.id} $bars: ${out.sumOf { it.bars }}", Math.abs(out.sumOf { it.bars } - goal) <= 2)
+            assertTrue(out.all { it.bars % 4 == 0 && it.bars >= it.type.minBars && it.bars <= it.type.maxBars })
+            assertEquals(pr.types, out.map { it.type })
+        }
+        // 4:00 ở 140 BPM = 140 ô, và mẫu Hook-trước (11 đoạn) co giãn vừa đúng
+        assertEquals(140, com.bandstudio.app.model.Structure.barsForSeconds(240, 140))
+        val s = com.bandstudio.app.model.Structure.plan("melodic", 140)
+        assertEquals(140, s.sumOf { it.bars })
+        assertEquals(11, s.size)
+        assertEquals(240, com.bandstudio.app.model.Structure.secondsOf(140, 140))
+        // quá nhỏ / quá lớn bị kẹp về giới hạn của cấu trúc
+        assertEquals(com.bandstudio.app.model.Structure.defaults(com.bandstudio.app.model.Structure.preset("short").types).sumOf { it.type.minBars },
+            com.bandstudio.app.model.Structure.fit(com.bandstudio.app.model.Structure.defaults(com.bandstudio.app.model.Structure.preset("short").types), 4).sumOf { it.bars })
+    }
+
+    @Test
+    fun structureNamesStartsAndLegacy() {
+        val S = com.bandstudio.app.model.Structure
+        val list = S.plan("melodic", 104)
+        assertEquals(listOf("Intro", "Hook", "Verse 1", "Pre-hook", "Hook", "Verse 2", "Pre-hook", "Hook", "Bridge", "Hook", "Outro"), S.names(list))
+        assertEquals(0, S.starts(list)[0]); assertEquals(8, S.starts(list)[1])
+        val legacy = S.legacy(24)
+        assertEquals(24, legacy.sumOf { it.bars })
+        assertEquals(com.bandstudio.app.model.SectionType.INTRO, legacy.first().type)
+        assertEquals(com.bandstudio.app.model.SectionType.OUTRO, legacy.last().type)
+    }
+
+    @Test
+    fun arrangeFollowsTheChosenStructure() {
+        val vocal = Track(3, "Vocal", Instrument.VOCAL, vocal = vclip(len = 30_000))
+        val st = com.bandstudio.app.model.Structure.plan("melodic", 104)
+        val base = Project("p", "n", bpm = 140, tracks = listOf(vocal), nextId = 10, keyRoot = 9, minor = true, structure = st)
+        val out = Arranger.arrange(base, Catalog.genre("melodic")!!, vocalBars = 12)
+        val autos = out.tracks.filter { it.auto }
+        assertEquals(104, autos.flatMap { it.clips }.maxOf { it.endBar })
+        val starts = com.bandstudio.app.model.Structure.starts(st)
+        val pad = autos.first { it.instrument == Instrument.DRUM_PAD }
+        // crash (kit 7) ở đầu mỗi hook
+        for ((i, s) in st.withIndex()) if (s.type == com.bandstudio.app.model.SectionType.HOOK) {
+            val c = pad.clips.firstOrNull { it.startBar == starts[i] }
+            assertTrue("thiếu crash ở hook ô ${starts[i]}", c != null && c.notes.any { it.start == 0 && it.pitch == 7 })
+        }
+        // vòng đệm: ô cuối của pre-hook có nhiều clap dồn; intro (không có hook ngay sau? có: hook sau intro) có dồn nhẹ
+        val preIdx = st.indexOfFirst { it.type == com.bandstudio.app.model.SectionType.PREHOOK }
+        val lastBlockStart = starts[preIdx] + st[preIdx].bars - 4
+        val roll = pad.clips.first { it.startBar == lastBlockStart }.notes.filter { it.start >= 3 * BAR_TICKS && it.pitch == 4 }
+        assertTrue("pre-hook phải có clap dồn, có ${roll.size}", roll.size >= 8)
+        assertTrue(roll.maxOf { it.vel } > roll.minOf { it.vel } + 30)
+        // bridge: không có trống / bass / guitar
+        val bi = st.indexOfFirst { it.type == com.bandstudio.app.model.SectionType.BRIDGE }
+        for (t in autos) if (t.instrument == Instrument.BASS || t.instrument == Instrument.ACOUSTIC)
+            assertTrue("${t.name} không nên chơi ở bridge", t.clips.none { it.startBar in starts[bi] until starts[bi] + st[bi].bars })
+    }
 }
