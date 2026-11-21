@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Nền tối ngay từ lúc mở app để không chớp trắng trước màn hình chờ. -->
+    <style name="Theme.Makeabeat" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/window_bg</item>
+    </style>
+</resources>

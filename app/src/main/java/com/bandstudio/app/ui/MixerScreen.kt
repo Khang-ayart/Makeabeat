@@ -205,7 +205,7 @@ private fun ExportCard(vm: StudioViewModel) {
                 Button(onClick = { ExportActions.share(ctx, f, kind.mime) }) { Text("Gửi / đăng") }
                 OutlinedButton(onClick = {
                     val ok = ExportActions.saveToDevice(ctx, f, kind.mime)
-                    saved = if (ok) "Đã lưu vào Music/BandStudio." else "Máy cũ hoặc lỗi: dùng nút Gửi / đăng để lưu vào Drive hay Zalo."
+                    saved = if (ok) "Đã lưu vào Music/Makeabeat." else "Máy cũ hoặc lỗi: dùng nút Gửi / đăng để lưu vào Drive hay Zalo."
                 }) { Text("Lưu vào máy") }
             }
             saved?.let { Text(it, style = MaterialTheme.typography.bodySmall) }

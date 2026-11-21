@@ -21,14 +21,14 @@ object ExportActions {
         ctx.startActivity(Intent.createChooser(send, "Gửi bản nhạc").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    /** Lưu vào Music/BandStudio. Trả false nếu máy Android < 10 hoặc lỗi. */
+    /** Lưu vào Music/Makeabeat. Trả false nếu máy Android < 10 hoặc lỗi. */
     fun saveToDevice(ctx: Context, file: File, mime: String): Boolean {
         if (Build.VERSION.SDK_INT < 29) return false
         return try {
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
                 put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Music/BandStudio")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Music/Makeabeat")
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
             val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI

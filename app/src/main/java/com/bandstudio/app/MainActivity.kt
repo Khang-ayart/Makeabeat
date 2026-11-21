@@ -8,7 +8,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import com.bandstudio.app.ui.SplashScreen
 import com.bandstudio.app.audio.AudioEngine
 import com.bandstudio.app.audio.SampleBank
 import com.bandstudio.app.ui.BandStudioTheme
@@ -52,8 +57,9 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun AppRoot(vm: StudioViewModel) {
+    var splash by rememberSaveable { mutableStateOf(true) }
     // Quay lại: Trình soạn -> Studio -> Danh sách -> thoát.
-    BackHandler(enabled = vm.screen != Screen.Home) { vm.back() }
+    BackHandler(enabled = !splash && vm.screen != Screen.Home) { vm.back() }
 
     // Mỗi khung hình: cập nhật vị trí đầu phát.
     LaunchedEffect(Unit) {
@@ -63,6 +69,10 @@ private fun AppRoot(vm: StudioViewModel) {
         }
     }
 
+    if (splash) {
+        SplashScreen { splash = false }
+        return
+    }
     when (vm.screen) {
         Screen.Home -> HomeScreen(vm)
         Screen.Studio -> StudioScreen(vm)

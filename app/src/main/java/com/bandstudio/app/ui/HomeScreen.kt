@@ -51,7 +51,7 @@ fun HomeScreen(vm: StudioViewModel) {
             .padding(horizontal = 16.dp),
     ) {
         Spacer(Modifier.height(20.dp))
-        Text("BandStudio", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Makeabeat", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text(
             "Phòng thu trong túi bạn. Không cần mạng, không tài khoản, không quảng cáo.",
             style = MaterialTheme.typography.bodyMedium,
