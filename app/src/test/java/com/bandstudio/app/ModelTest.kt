@@ -19,6 +19,7 @@ import com.bandstudio.app.model.Project
 import com.bandstudio.app.model.SoundCat
 import com.bandstudio.app.model.Quantizer
 import com.bandstudio.app.model.Track
+import com.bandstudio.app.model.SectionType as T
 import com.bandstudio.app.model.encodeForEngine
 import com.bandstudio.app.model.toJson
 import org.junit.Assert.assertArrayEquals
@@ -897,7 +898,6 @@ class ModelTest {
 
     @Test
     fun remixStructureHasBuildDropBreakAndTheArrangementFollowsIt() {
-        val T = com.bandstudio.app.model.SectionType
         val st = com.bandstudio.app.model.Structure.plan("remix", 96)
         assertEquals(96, com.bandstudio.app.model.Structure.totalBars(st))
         assertTrue(st.any { it.type == T.BUILD } && st.any { it.type == T.DROP } && st.any { it.type == T.BREAK })
