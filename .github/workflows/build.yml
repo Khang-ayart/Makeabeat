@@ -59,13 +59,32 @@ jobs:
           KS_B64: ${{ secrets.MAKEABEAT_KEYSTORE_B64 }}
         run: |
           if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "$KS_B64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "MAKEABEAT_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "HAVE_KEY=true" >> "$GITHUB_ENV"
           else
             echo "::warning::Chưa có khóa ký (secrets). APK ký debug, sẽ không được phát hành và không cài đè lên bản chính thức."
             echo "HAVE_KEY=false" >> "$GITHUB_ENV"
           fi
+
+      - name: Check signing key
+        if: env.HAVE_KEY == 'true'
+        env:
+          SP: ${{ secrets.MAKEABEAT_KEYSTORE_PASSWORD }}
+          AL: ${{ secrets.MAKEABEAT_KEY_ALIAS }}
+          KP: ${{ secrets.MAKEABEAT_KEY_PASSWORD }}
+        run: |
+          # Bỏ khoảng trắng / xuống dòng thừa khi dán secrets, rồi kiểm tra từng phần để báo lỗi rõ ràng (không in giá trị).
+          SP=$(printf %s "$SP" | tr -d '[:space:]'); AL=$(printf %s "$AL" | tr -d '[:space:]'); KP=$(printf %s "$KP" | tr -d '[:space:]')
+          echo "MAKEABEAT_KEYSTORE_PASSWORD=$SP" >> "$GITHUB_ENV"; echo "MAKEABEAT_KEY_ALIAS=$AL" >> "$GITHUB_ENV"; echo "MAKEABEAT_KEY_PASSWORD=$KP" >> "$GITHUB_ENV"
+          ls -l "$RUNNER_TEMP/release.jks"
+          if ! keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$SP" > "$RUNNER_TEMP/kt.txt" 2>&1; then
+            echo "::error::Không mở được keystore: MAKEABEAT_KEYSTORE_B64 hỏng/thiếu, hoặc MAKEABEAT_KEYSTORE_PASSWORD sai (phải cùng bộ với tệp .jks)."; sed 's/[A-Za-z0-9+\/=]\{40,\}/<...>/g' "$RUNNER_TEMP/kt.txt" | head -5; exit 1
+          fi
+          if ! keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$SP" -alias "$AL" > /dev/null 2>&1; then
+            echo "::error::MAKEABEAT_KEY_ALIAS không khớp alias trong keystore (alias đúng là: makeabeat)."; exit 1
+          fi
+          echo "Khóa ký hợp lệ."
 
       - name: Unit tests + build release APK
         env:
