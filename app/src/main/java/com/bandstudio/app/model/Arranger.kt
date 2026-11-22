@@ -360,12 +360,12 @@ object Arranger {
         val dn = ArrayList<NoteEvent>()
         if (isHook(blk.sec) && blk.index == 0) dn.add(NoteEvent(0, 960, 7, if (blk.hookNo == 1) 100 else 90))  // kCrash
         if (blk.sec == Section.BUILD) {
-            // Build-up: clap dồn mau dần cả đoạn (1/4 -> 1/8 -> 1/16 -> 1/32), mạnh dần, chừa nửa phách cuối im lặng trước khi drop vào.
+            // Build-up: clap dồn mau dần cả đoạn (1/4 -> 1/8 -> 1/16 -> 1/32), mạnh dần, chừa phách cuối im lặng trước khi drop vào.
             val total = (blk.count * BLOCK_BARS).coerceAtLeast(1)
             for (bi in 0 until BLOCK_BARS) {
                 val gbar = blk.index * BLOCK_BARS + bi
                 val t = gbar.toDouble() / total
-                val gap = if (blk.index == blk.count - 1 && bi == BLOCK_BARS - 1) 3 * BEAT_TICKS_ + BEAT_TICKS_ / 2 else BAR_TICKS
+                val gap = if (blk.index == blk.count - 1 && bi == BLOCK_BARS - 1) 3 * BEAT_TICKS_ else BAR_TICKS
                 val interval = when { t < 0.25 -> BEAT_TICKS_; t < 0.5 -> BEAT_TICKS_ / 2; t < 0.75 -> BEAT_TICKS_ / 4 else -> BEAT_TICKS_ / 8 }
                 var k = 0
                 while (k * interval < gap) {

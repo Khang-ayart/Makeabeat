@@ -394,7 +394,7 @@ object Patterns {
 
     /** Giọng synth theo thể loại: 1 sáng (pop, EDM, latin, afro, rock), 2 mềm tối (lo-fi, jazz, R&B, ballad, acoustic), 3 gắt ngắn (trap, drill, hip-hop, melodic). */
     fun synthStyleOf(genreId: String): Int = when (genreId) {
-        "pop", "edm", "latin", "afro", "rock" -> 1
+        "pop", "edm", "remix", "latin", "afro", "rock" -> 1
         "lofi", "jazz", "rnb", "ballad", "acoustic" -> 2
         "trap", "drill", "hiphop", "melodic" -> 3
         else -> 0
