@@ -335,7 +335,7 @@ object Arranger {
                 var sc = w[r] * 1.0 + w[t3] * 0.8 + w[t5] * 0.7
                 for (pc in 0 until 12) if (pc != r && pc != t3 && pc != t5) sc -= w[pc] * 0.3
                 if (prev != null && c.root == prev.root && c.minor == prev.minor) sc += total * 0.1
-                sc += (rnd.nextDouble() - 0.5) * total * 0.35
+                sc += (rnd.nextDouble() - 0.5) * total * 0.55
                 if (sc > bestScore) { bestScore = sc; best = c }
             }
             out.add(best); prev = best
@@ -475,9 +475,14 @@ object Arranger {
 
         var nextId = p.nextId
         fun nid() = nextId++
+        val cols = IntArray(5) { rnd.nextInt(PADS_PER_ROW) }
+        val hookCols = IntArray(5) { (cols[it] + 1 + rnd.nextInt(PADS_PER_ROW - 1)) % PADS_PER_ROW }
+        val arp = mood.arpeggio || rnd.nextInt(3) == 0
+        val pianoUp = if (rnd.nextInt(3) == 0) 12 else 0
+        val guitarInst = if (rnd.nextBoolean()) Instrument.ACOUSTIC else Instrument.ELECTRIC
         val moodPiano = mood.pianoPatterns.map { pianoPatterns[it] }
         fun kv(x: Int) = (x * keysF).roundToInt().coerceIn(1, 127)
-        val spread = if (mood.arpeggio) 110 else 8
+        val spread = if (arp) 110 else 8
 
         val looperClips = ArrayList<Clip>()
         val pianoClips = ArrayList<Clip>()
@@ -493,10 +498,10 @@ object Arranger {
             // Looper: hi-hat / bộ gõ đổi biến thể theo hạt giống; giọng đang hát dày thì bỏ hàng bộ gõ cho thoáng.
             // Bám giai điệu thì chỉ giữ trống / bộ gõ (bass, hợp âm do các track riêng đánh theo giọng).
             var pads = padsFor(sec, follow).filter { !follow || !isMelodicRow(it) }
-            if (sec == Section.VERSE || isHook(sec)) {
-                pads = pads.map { pd -> if (pd / PADS_PER_ROW == 2 || pd / PADS_PER_ROW == 3) (pd / PADS_PER_ROW) * PADS_PER_ROW + rnd.nextInt(PADS_PER_ROW) else pd }
-                if (sec == Section.VERSE && blockAct > 0.7f) pads = pads.filter { it / PADS_PER_ROW != 3 }
-            }
+            // Mỗi hàng trống / bass (kick, snare, hi-hat, bộ gõ, bass) dùng một cột riêng do hạt giống chọn (cột = cả mẫu nhịp lẫn âm thanh);
+            // hook dùng cột khác verse. Nên mỗi lần "Tạo beat" ra bộ trống và nhịp khác hẳn chứ không chỉ chỉnh nhẹ.
+            pads = pads.map { pd -> val r = pd / PADS_PER_ROW; if (r <= 4) r * PADS_PER_ROW + (if (isHook(sec)) hookCols[r] else cols[r]) else pd }
+            if (sec == Section.VERSE && blockAct > 0.7f) pads = pads.filter { it / PADS_PER_ROW != 3 }
             if (mood.sparseDrums) pads = pads.filter { it / PADS_PER_ROW != 3 }.map { (it / PADS_PER_ROW) * PADS_PER_ROW }  // chỉ mẫu thưa nhất, bỏ hàng bộ gõ
             var loopNotes = pads.distinct().flatMap { pad -> clipNotes(Patterns.padHitsIn(genre, key, minor, pad)) }
                 .map { if (drumsF == 1f) it else it.copy(vel = (it.vel * drumsF).roundToInt().coerceIn(1, 127)) }
@@ -532,7 +537,7 @@ object Arranger {
                     val nextSt = pSteps.getOrNull(si + 1) ?: 16
                     val dur = ((nextSt - st).coerceAtMost(8)) * STEP_TICKS - 60
                     val accent = if (st == 0) 6 else 0
-                    for ((k, n) in notes.withIndex()) pn.add(NoteEvent(i * BAR_TICKS + st * STEP_TICKS + k * spread, dur.coerceAtLeast(120), n, kv((vel(base, gb) + accent - k * 2).coerceIn(20, 127))))
+                    for ((k, n) in notes.withIndex()) pn.add(NoteEvent(i * BAR_TICKS + st * STEP_TICKS + k * spread, dur.coerceAtLeast(120), n + pianoUp, kv((vel(base, gb) + accent - k * 2).coerceIn(20, 127))))
                 }
             }
             if (follow && isHook(sec)) {
@@ -604,7 +609,7 @@ object Arranger {
         // Âm lượng thấp hơn giọng (giọng ở 0,9-1,0) để nhạc nằm dưới lời.
         add(Instrument.LOOPER, "Looper ${genre.label}", 0.62f, 0f, looperClips, looper = true)
         add(Instrument.PIANO, if (follow) "Piano theo giọng" else "Piano đệm", 0.45f, -0.15f, pianoClips)
-        add(Instrument.ACOUSTIC, "Guitar", 0.36f, 0.25f, guitarClips)
+        add(guitarInst, if (guitarInst == Instrument.ACOUSTIC) "Guitar" else "Guitar điện", if (guitarInst == Instrument.ACOUSTIC) 0.36f else 0.3f, 0.25f, guitarClips)
         add(Instrument.BASS, "Bass theo giọng", 0.55f, 0f, bassClips)
         add(Instrument.DRUM_PAD, "Clap & crash", 0.4f, 0f, padClips)
         add(Instrument.ELECTRIC, "Riser", 0.3f, 0.1f, riserClips)

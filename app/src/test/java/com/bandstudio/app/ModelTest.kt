@@ -938,4 +938,21 @@ class ModelTest {
         val sad = Arranger.arrange(moodBase(com.bandstudio.app.model.Mood.AUTO).copy(valence = 5), genre, vocalBars = 12)
         assertTrue(sad.tracks.first { it.auto && it.instrument == Instrument.DRUM_PAD }.clips.flatMap { it.notes }.none { it.pitch == 4 })
     }
+
+    @Test
+    fun eachPressOfCreateBeatChangesTheDrumKitNotJustTweaksIt() {
+        val genre = Catalog.genre("melodic")!!
+        val kits = (0 until 10).map { sd ->
+            val o = Arranger.arrange(moodBase(com.bandstudio.app.model.Mood.AUTO).copy(arrangeSeed = sd), genre, vocalBars = 12)
+            val lp = o.tracks.first { it.auto && it.instrument == Instrument.LOOPER }
+            lp.clips.flatMap { it.notes }.map { it.pitch }.toSortedSet().toList()   // tập pad (âm + mẫu) đã dùng
+        }.toSet()
+        assertTrue("10 lần tạo phải ra ít nhất 7 bộ trống khác nhau, có ${kits.size}", kits.size >= 7)
+        // mỗi hàng kick / snare dùng ít nhất 3 cột khác nhau qua 10 lần
+        val kickCols = (0 until 10).flatMap { sd ->
+            Arranger.arrange(moodBase(com.bandstudio.app.model.Mood.AUTO).copy(arrangeSeed = sd), genre, vocalBars = 12)
+                .tracks.first { it.auto && it.instrument == Instrument.LOOPER }.clips.flatMap { it.notes }.filter { it.pitch / PADS_PER_ROW == 0 }.map { it.pitch % PADS_PER_ROW }
+        }.toSet()
+        assertTrue(kickCols.size >= 3)
+    }
 }
