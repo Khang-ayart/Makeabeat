@@ -201,6 +201,8 @@ data class Project(
     val arrangeGenre: String = "hiphop",
     /** true: nhạc cụ đánh theo nốt giọng hát (melodic/pop); false: chỉ đệm hợp âm (rap). */
     val followMelody: Boolean = false,
+    /** Cảm xúc của bản phối (id trong [Mood]). */
+    val mood: String = "auto",
     /** Số lần đã "Tạo beat": hạt giống để mỗi lần ra một biến thể khác. */
     val arrangeSeed: Int = 0,
     /** Cấu trúc bài đã chọn (rỗng = chưa chọn, dùng mẫu "Chuẩn"). */

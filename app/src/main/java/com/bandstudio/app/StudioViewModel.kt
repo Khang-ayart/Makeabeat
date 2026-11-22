@@ -34,6 +34,7 @@ import com.bandstudio.app.model.MAX_CLIP_BARS
 import com.bandstudio.app.model.MAX_TRACKS
 import com.bandstudio.app.model.PADS_PER_ROW
 import com.bandstudio.app.model.Catalog
+import com.bandstudio.app.model.Mood
 import com.bandstudio.app.model.DEFAULT_KEY
 import com.bandstudio.app.model.PAD_COUNT
 import com.bandstudio.app.model.PENDING_SHIFT
@@ -1335,6 +1336,9 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setArrangeOptions(genreId: String? = null, followMelody: Boolean? = null) =
         update { it.copy(arrangeGenre = genreId ?: it.arrangeGenre, followMelody = followMelody ?: it.followMelody) }
+
+    /** Chọn cảm xúc cho bản phối; buồn / mạnh đặt thang thứ, vui đặt thang trưởng (đổi lại được ở dòng chọn tông). */
+    fun setMood(m: Mood) = update { it.copy(mood = m.id, minor = m.minor ?: it.minor) }
 
     // ---- Cấu trúc & thời lượng ----
 

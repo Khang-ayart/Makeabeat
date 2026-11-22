@@ -855,4 +855,43 @@ class ModelTest {
         for (t in autos) if (t.instrument == Instrument.BASS || t.instrument == Instrument.ACOUSTIC)
             assertTrue("${t.name} không nên chơi ở bridge", t.clips.none { it.startBar in starts[bi] until starts[bi] + st[bi].bars })
     }
+
+    private fun moodBase(mood: com.bandstudio.app.model.Mood) = Project(
+        "p", "n", bpm = 140, tracks = emptyList(), nextId = 10, keyRoot = 9, minor = true,
+        structure = com.bandstudio.app.model.Structure.plan("melodic", 104), mood = mood.id,
+    )
+
+    @Test
+    fun sadMoodHasNoClapsNoGuitarAndSoftDrums() {
+        val genre = Catalog.genre("melodic")!!
+        val sad = Arranger.arrange(moodBase(com.bandstudio.app.model.Mood.SAD), genre, vocalBars = 12)
+        val free = Arranger.arrange(moodBase(com.bandstudio.app.model.Mood.AUTO), genre, vocalBars = 12)
+        assertTrue(sad.tracks.none { it.auto && it.instrument == Instrument.ACOUSTIC })
+        assertTrue(free.tracks.any { it.auto && it.instrument == Instrument.ACOUSTIC })
+        val sadPad = sad.tracks.first { it.auto && it.instrument == Instrument.DRUM_PAD }
+        assertTrue("buồn không có clap", sadPad.clips.flatMap { it.notes }.none { it.pitch == 4 })
+        val crash = sadPad.clips.flatMap { it.notes }.filter { it.pitch == 7 }
+        assertTrue(crash.isNotEmpty() && crash.all { it.vel < 60 })
+        val freePad = free.tracks.first { it.auto && it.instrument == Instrument.DRUM_PAD }
+        assertTrue(freePad.clips.flatMap { it.notes }.any { it.pitch == 4 })
+        fun peak(p: Project) = p.tracks.first { it.auto && it.instrument == Instrument.LOOPER }.clips.flatMap { it.notes }.maxOf { it.vel }
+        assertTrue(peak(sad) < peak(free))
+    }
+
+    @Test
+    fun moodsGiveManyDifferentChordProgressionsAndScales() {
+        for (m in com.bandstudio.app.model.Mood.entries) {
+            val progs = m.progressions(true)
+            assertTrue("${m.id} cần nhiều vòng hợp âm", progs.size >= 5 && progs.all { it.size == 4 })
+        }
+        val genre = Catalog.genre("melodic")!!
+        val pianos = (0 until 12).map { s ->
+            val o = Arranger.arrange(moodBase(com.bandstudio.app.model.Mood.SAD).copy(arrangeSeed = s), genre, vocalBars = 12)
+            o.tracks.first { it.auto && it.instrument == Instrument.PIANO }.clips.first().notes.map { it.pitch }.take(12)
+        }.toSet()
+        assertTrue("12 lần tạo buồn phải ra ít nhất 4 kiểu piano khác nhau, có ${pianos.size}", pianos.size >= 4)
+        assertEquals(true, com.bandstudio.app.model.Mood.SAD.minor); assertEquals(false, com.bandstudio.app.model.Mood.HAPPY.minor)
+        assertEquals(com.bandstudio.app.model.Mood.SAD, com.bandstudio.app.model.Mood.of("sad"))
+        assertEquals(com.bandstudio.app.model.Mood.AUTO, com.bandstudio.app.model.Mood.of("lạ"))
+    }
 }

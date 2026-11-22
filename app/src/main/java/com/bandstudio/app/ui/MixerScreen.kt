@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.bandstudio.app.StudioViewModel
 import com.bandstudio.app.model.Catalog
+import com.bandstudio.app.model.Mood
 import com.bandstudio.app.model.Track
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.getValue
@@ -79,6 +80,11 @@ fun MixerScreen(vm: StudioViewModel) {
                     Slider(value = project.bpm.toFloat(), onValueChange = { vm.setBpm(it.roundToInt()) }, valueRange = 40f..240f, modifier = Modifier.weight(1f))
                 }
                 KeyRow(vm, project.keyRoot, project.minor, vm.detectedKey)
+                Text("Cảm xúc", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    for (m in Mood.entries) ToggleChip(m.label, m.id == project.mood, { vm.setMood(m) })
+                }
+                Text(Mood.of(project.mood).hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Thể loại", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     for (g in Catalog.genres) {

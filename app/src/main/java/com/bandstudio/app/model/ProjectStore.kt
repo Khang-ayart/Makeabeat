@@ -16,6 +16,7 @@ fun Project.toJson(): JSONObject = JSONObject().apply {
     put("arrGenre", arrangeGenre)
     put("follow", followMelody)
     put("arrSeed", arrangeSeed)
+    put("mood", mood)
     put("targetSec", targetSeconds)
     put("preset", structurePreset)
     put("struct", JSONArray().also { a -> for (x in structure) a.put(JSONArray().put(x.type.name).put(x.bars)) })
@@ -163,6 +164,7 @@ fun projectFromJson(o: JSONObject): Project {
         arrangeGenre = o.optString("arrGenre", "hiphop"),
         followMelody = o.optBoolean("follow", false),
         arrangeSeed = o.optInt("arrSeed", 0),
+        mood = o.optString("mood", "auto"),
         targetSeconds = o.optInt("targetSec", 0).coerceIn(0, 3600),
         structurePreset = o.optString("preset", "standard"),
         structure = (o.optJSONArray("struct") ?: JSONArray()).let { a ->
