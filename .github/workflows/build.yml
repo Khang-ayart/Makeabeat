@@ -87,10 +87,6 @@ jobs:
           echo "Khóa ký hợp lệ."
 
       - name: Unit tests + build release APK
-        env:
-          MAKEABEAT_KEYSTORE_PASSWORD: ${{ secrets.MAKEABEAT_KEYSTORE_PASSWORD }}
-          MAKEABEAT_KEY_ALIAS: ${{ secrets.MAKEABEAT_KEY_ALIAS }}
-          MAKEABEAT_KEY_PASSWORD: ${{ secrets.MAKEABEAT_KEY_PASSWORD }}
         run: gradle testDebugUnitTest assembleRelease -PversionCode=${{ github.run_number }} -PversionName=0.2.${{ github.run_number }} --stacktrace
 
       - name: Name APK and show signing certificate
