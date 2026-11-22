@@ -10,6 +10,9 @@ enum class SectionType(val label: String, val color: Long, val defaultBars: Int,
     HOOK("Hook", 0xFFFF6B8A, 8, 4, 16),
     BRIDGE("Bridge", 0xFFB48CFF, 8, 4, 16),
     OUTRO("Outro", 0xFF8AD1C2, 8, 4, 16),
+    BUILD("Build-up", 0xFFFF7BD5, 4, 4, 8),
+    DROP("Drop", 0xFF5BFF9D, 8, 4, 16),
+    BREAK("Break", 0xFF6FA8FF, 8, 4, 16),
 }
 
 /** Một đoạn của bài: [type] kéo dài [bars] ô nhịp (bội của 4 để khớp cụm 4 ô của nhịp trống). */
@@ -30,6 +33,7 @@ object Structure {
         Preset("melodic", "Hook trước (Melodic Trap)", types(I, H, V, P, H, V, P, H, B, H, O)),
         Preset("standard", "Chuẩn", types(I, V, P, H, V, P, H, B, H, O)),
         Preset("short", "Ngắn", types(I, V, H, V, H, O)),
+        Preset("remix", "Remix (build-up · drop · break)", types(I, V, SectionType.BUILD, SectionType.DROP, SectionType.BREAK, V, SectionType.BUILD, SectionType.DROP, O)),
     )
 
     fun preset(id: String): Preset = presets.firstOrNull { it.id == id } ?: presets[1]
@@ -48,7 +52,7 @@ object Structure {
     fun secondsOf(bars: Int, bpm: Int): Int = (bars * 240.0 / bpm.coerceAtLeast(1)).roundToInt()
 
     /** Thứ tự loại đoạn được kéo dài / thu ngắn khi co giãn cấu trúc cho vừa thời lượng. */
-    private val growOrder = listOf(SectionType.VERSE, SectionType.HOOK, SectionType.BRIDGE, SectionType.INTRO, SectionType.OUTRO, SectionType.PREHOOK)
+    private val growOrder = listOf(SectionType.VERSE, SectionType.HOOK, SectionType.DROP, SectionType.BREAK, SectionType.BRIDGE, SectionType.INTRO, SectionType.OUTRO, SectionType.PREHOOK, SectionType.BUILD)
 
     /**
      * Co giãn [list] cho tổng đúng [target] ô (làm tròn về bội của 4 và về giới hạn có thể đạt): mỗi bước 4 ô cho đoạn nào đang

@@ -203,6 +203,8 @@ data class Project(
     val followMelody: Boolean = false,
     /** Cảm xúc của bản phối (id trong [Mood]). */
     val mood: String = "auto",
+    /** Thanh trượt Buồn (0) ... Vui (100); 50 = trung tính. */
+    val valence: Int = 50,
     /** Số lần đã "Tạo beat": hạt giống để mỗi lần ra một biến thể khác. */
     val arrangeSeed: Int = 0,
     /** Cấu trúc bài đã chọn (rỗng = chưa chọn, dùng mẫu "Chuẩn"). */

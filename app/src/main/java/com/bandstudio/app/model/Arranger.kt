@@ -13,7 +13,10 @@ import kotlin.math.roundToInt
  */
 object Arranger {
 
-    enum class Section { INTRO, VERSE, PREHOOK, CHORUS, BRIDGE, OUTRO }
+    enum class Section { INTRO, VERSE, PREHOOK, CHORUS, BRIDGE, OUTRO, BUILD, DROP, BREAK }
+
+    /** Hook (chorus) và drop dùng chung cách phối "đoạn cao trào". */
+    private fun isHook(s: Section?) = s == Section.CHORUS || s == Section.DROP
 
     const val BLOCK_BARS = 4
     private const val AUTO_PREFIX = "Tự động"
@@ -43,25 +46,31 @@ object Arranger {
         SectionType.HOOK -> Section.CHORUS
         SectionType.BRIDGE -> Section.BRIDGE
         SectionType.OUTRO -> Section.OUTRO
+        SectionType.BUILD -> Section.BUILD
+        SectionType.DROP -> Section.DROP
+        SectionType.BREAK -> Section.BREAK
     }
 
     /** Một khối 4 ô của bài: đoạn nào, khối thứ mấy trong đoạn, đoạn kế tiếp, hook thứ mấy. */
     class Block(val sec: Section, val index: Int, val count: Int, val next: Section?, val hookNo: Int, val hookTotal: Int)
 
     fun blocksOf(structure: List<SongSection>): List<Block> {
-        val hookTotal = structure.count { it.type == SectionType.HOOK }
+        val hookTotal = structure.count { it.type == SectionType.HOOK || it.type == SectionType.DROP }
         var hookNo = 0
         val out = ArrayList<Block>()
         for ((si, s) in structure.withIndex()) {
             val n = (s.bars / BLOCK_BARS).coerceAtLeast(1)
             val next = structure.getOrNull(si + 1)?.type?.let { sectionOf(it) }
-            if (s.type == SectionType.HOOK) hookNo++
+            if (s.type == SectionType.HOOK || s.type == SectionType.DROP) hookNo++
             for (i in 0 until n) out.add(Block(sectionOf(s.type), i, n, next, hookNo, hookTotal))
         }
         return out
     }
 
     fun padsFor(section: Section, followMelody: Boolean): List<Int> = when (section) {
+        Section.BUILD -> listOf(2 * 4 + 0, 7 * 4 + 0)  // chỉ hi-hat + pad; tiếng dồn do track Drum Pad / Riser đảm nhiệm
+        Section.BREAK -> buildList { add(7 * 4 + 0); if (!followMelody) add(5 * 4 + 0) }  // break: không trống
+        Section.DROP -> listOf(0 * 4 + 1, 1 * 4 + 1, 2 * 4 + 1, 3 * 4 + 0, 4 * 4 + 1, 5 * 4 + 1, 6 * 4 + 0, 7 * 4 + 0)
         Section.PREHOOK -> listOf(1 * 4 + 0, 2 * 4 + 0, 7 * 4 + 0)  // dồn lên: bỏ kick và bass, chỉ hi-hat + snare + pad
         Section.BRIDGE -> buildList { add(7 * 4 + 0); if (!followMelody) add(5 * 4 + 0) }  // breakdown: không trống
         Section.INTRO -> listOf(2 * 4 + 0, 5 * 4 + 0, 7 * 4 + 0)
@@ -338,20 +347,38 @@ object Arranger {
      * Nốt Drum Pad (kit: 4 = clap, 7 = crash) của một khối: crash ở đầu hook (hook đầu tiên mạnh hơn); ở ô cuối của đoạn ngay trước
      * hook thì thêm vòng đệm đẩy hook: pre-hook dồn clap tăng dần cả ô, các đoạn khác chỉ một nhịp dồn nhẹ.
      */
-    fun transitionNotes(blk: Block, mood: Mood = Mood.AUTO): ArrayList<NoteEvent> {
+    fun transitionNotes(blk: Block, mood: Mood = Mood.AUTO, fx: Float = mood.fx): ArrayList<NoteEvent> {
         val out = ArrayList<NoteEvent>()
         for (n in rawTransition(blk)) {
             if (n.pitch == 4 && !mood.claps) continue
-            out.add(n.copy(vel = (n.vel * mood.fx).roundToInt().coerceIn(1, 127)))
+            out.add(n.copy(vel = (n.vel * fx).roundToInt().coerceIn(1, 127)))
         }
         return out
     }
 
     private fun rawTransition(blk: Block): ArrayList<NoteEvent> {
         val dn = ArrayList<NoteEvent>()
-        if (blk.sec == Section.CHORUS && blk.index == 0) dn.add(NoteEvent(0, 960, 7, if (blk.hookNo == 1) 100 else 90))  // kCrash
+        if (isHook(blk.sec) && blk.index == 0) dn.add(NoteEvent(0, 960, 7, if (blk.hookNo == 1) 100 else 90))  // kCrash
+        if (blk.sec == Section.BUILD) {
+            // Build-up: clap dồn mau dần cả đoạn (1/4 -> 1/8 -> 1/16 -> 1/32), mạnh dần, chừa nửa phách cuối im lặng trước khi drop vào.
+            val total = (blk.count * BLOCK_BARS).coerceAtLeast(1)
+            for (bi in 0 until BLOCK_BARS) {
+                val gbar = blk.index * BLOCK_BARS + bi
+                val t = gbar.toDouble() / total
+                val gap = if (blk.index == blk.count - 1 && bi == BLOCK_BARS - 1) 3 * BEAT_TICKS_ + BEAT_TICKS_ / 2 else BAR_TICKS
+                val interval = when { t < 0.25 -> BEAT_TICKS_; t < 0.5 -> BEAT_TICKS_ / 2; t < 0.75 -> BEAT_TICKS_ / 4 else -> BEAT_TICKS_ / 8 }
+                var k = 0
+                while (k * interval < gap) {
+                    val tick = bi * BAR_TICKS + k * interval
+                    val prog = (gbar + (k * interval).toDouble() / BAR_TICKS) / total
+                    dn.add(NoteEvent(tick, minOf(interval, STEP_TICKS), 4, (40 + 80 * prog).roundToInt().coerceIn(30, 122)))
+                    k++
+                }
+            }
+            return dn
+        }
         val lastBlock = blk.index == blk.count - 1
-        if (lastBlock && blk.next == Section.CHORUS && blk.sec != Section.CHORUS) {
+        if (lastBlock && isHook(blk.next) && !isHook(blk.sec)) {
             val last = (BLOCK_BARS - 1) * BAR_TICKS
             if (blk.sec == Section.PREHOOK) {
                 for (k in 0 until 8) dn.add(NoteEvent(last + k * 2 * STEP_TICKS, STEP_TICKS, 4, 48 + k * 8))            // 8 clap tăng dần
@@ -418,7 +445,14 @@ object Arranger {
     ): Project {
         val key = Math.floorMod(p.keyRoot, 12)
         val minor = p.minor
-        val mood = Mood.of(p.mood)
+        val baseMood = Mood.of(p.mood)
+        val v = p.valence.coerceIn(0, 100)
+        val derived = baseMood != Mood.HYPE && v != 50
+        val mood = if (derived) Mood.byValence(v) else baseMood
+        // Thanh trượt Buồn...Vui: độ to trống / nhạc cụ / hiệu ứng đổi liên tục theo vị trí.
+        val drumsF = if (derived) 0.6f + 0.45f * v / 100f else mood.drums
+        val keysF = if (derived) 0.78f + 0.27f * v / 100f else mood.keys
+        val fxF = if (derived) 0.4f + 0.7f * v / 100f else mood.fx
         val moodProgs = mood.progressions(minor)
         val structure = p.structure.ifEmpty { Structure.legacy(totalBars(vocalBars)) }
         val plan = blocksOf(structure).take(MAX_BARS / BLOCK_BARS)
@@ -442,13 +476,14 @@ object Arranger {
         var nextId = p.nextId
         fun nid() = nextId++
         val moodPiano = mood.pianoPatterns.map { pianoPatterns[it] }
-        fun kv(v: Int) = (v * mood.keys).roundToInt().coerceIn(1, 127)
+        fun kv(x: Int) = (x * keysF).roundToInt().coerceIn(1, 127)
         val spread = if (mood.arpeggio) 110 else 8
 
         val looperClips = ArrayList<Clip>()
         val pianoClips = ArrayList<Clip>()
         val guitarClips = ArrayList<Clip>()
         val padClips = ArrayList<Clip>()
+        val riserClips = ArrayList<Clip>()
         val bassClips = ArrayList<Clip>()
         for (b in 0 until blocks) {
             val bar = b * BLOCK_BARS
@@ -458,25 +493,41 @@ object Arranger {
             // Looper: hi-hat / bộ gõ đổi biến thể theo hạt giống; giọng đang hát dày thì bỏ hàng bộ gõ cho thoáng.
             // Bám giai điệu thì chỉ giữ trống / bộ gõ (bass, hợp âm do các track riêng đánh theo giọng).
             var pads = padsFor(sec, follow).filter { !follow || !isMelodicRow(it) }
-            if (sec == Section.VERSE || sec == Section.CHORUS) {
+            if (sec == Section.VERSE || isHook(sec)) {
                 pads = pads.map { pd -> if (pd / PADS_PER_ROW == 2 || pd / PADS_PER_ROW == 3) (pd / PADS_PER_ROW) * PADS_PER_ROW + rnd.nextInt(PADS_PER_ROW) else pd }
                 if (sec == Section.VERSE && blockAct > 0.7f) pads = pads.filter { it / PADS_PER_ROW != 3 }
             }
             if (mood.sparseDrums) pads = pads.filter { it / PADS_PER_ROW != 3 }.map { (it / PADS_PER_ROW) * PADS_PER_ROW }  // chỉ mẫu thưa nhất, bỏ hàng bộ gõ
-            val loopNotes = pads.distinct().flatMap { pad -> clipNotes(Patterns.padHitsIn(genre, key, minor, pad)) }
-                .map { if (mood.drums == 1f) it else it.copy(vel = (it.vel * mood.drums).roundToInt().coerceIn(1, 127)) }
+            var loopNotes = pads.distinct().flatMap { pad -> clipNotes(Patterns.padHitsIn(genre, key, minor, pad)) }
+                .map { if (drumsF == 1f) it else it.copy(vel = (it.vel * drumsF).roundToInt().coerceIn(1, 127)) }
+            if (sec == Section.BUILD && blk.index == blk.count - 1) loopNotes = loopNotes.filter { it.start < 3 * BAR_TICKS + 2880 }  // im lặng nửa phách cuối trước drop
             if (loopNotes.isNotEmpty()) looperClips.add(Clip(nid(), bar, BLOCK_BARS, loopNotes.sortedBy { it.start }))
+
+            // Riser: nốt lên dần theo thang của tông suốt build-up.
+            if (sec == Section.BUILD) {
+                val sc = if (minor) intArrayOf(0, 2, 3, 5, 7, 8, 10) else intArrayOf(0, 2, 4, 5, 7, 9, 11)
+                val rn = ArrayList<NoteEvent>()
+                val tot = (blk.count * BLOCK_BARS).toDouble()
+                for (bi in 0 until BLOCK_BARS) for (st in 0 until 16 step 2) {
+                    val tick = bi * BAR_TICKS + st * STEP_TICKS
+                    if (blk.index == blk.count - 1 && tick >= 3 * BAR_TICKS + 2880) continue
+                    val prog = (blk.index * BLOCK_BARS + bi + st / 16.0) / tot
+                    val n = (prog * 14).toInt()
+                    rn.add(NoteEvent(tick, 2 * STEP_TICKS - 40, 48 + key + 12 * (n / 7) + sc[n % 7], (46 + 64 * prog).roundToInt().coerceIn(30, 118)))
+                }
+                riserClips.add(Clip(nid(), bar, BLOCK_BARS, rn))
+            }
 
             // Piano: hợp âm theo giọng, mẫu nhịp chọn theo âm tiết của giọng. Chorus nhấn khẽ giai điệu lên một quãng tám.
             val pn = ArrayList<NoteEvent>()
-            val pPat = if (sec == Section.INTRO || sec == Section.OUTRO || sec == Section.BRIDGE) pianoPatterns[rnd.nextInt(2)]
-            else if (sec == Section.PREHOOK) pianoPatterns[0]
-            else pickPattern(moodPiano, profile, bar, rnd, if (sec == Section.CHORUS) 0.2 else 0.6)
+            val pPat = if (sec == Section.INTRO || sec == Section.OUTRO || sec == Section.BRIDGE || sec == Section.BREAK) pianoPatterns[rnd.nextInt(2)]
+            else if (sec == Section.PREHOOK || sec == Section.BUILD) pianoPatterns[0]
+            else pickPattern(moodPiano, profile, bar, rnd, if (isHook(sec)) 0.2 else 0.6)
             val pSteps = steps(pPat)
             for (i in 0 until BLOCK_BARS) {
                 val gb = bar + i
                 val notes = Patterns.chordNotes(key, chordAt(gb))
-                val base = if (sec == Section.CHORUS) 62 + minOf(blk.hookNo - 1, 2) * 3 else if (sec == Section.BRIDGE) 44 else 50
+                val base = if (isHook(sec)) 62 + minOf(blk.hookNo - 1, 2) * 3 else if (sec == Section.BRIDGE || sec == Section.BREAK) 44 else 50
                 for ((si, st) in pSteps.withIndex()) {
                     val nextSt = pSteps.getOrNull(si + 1) ?: 16
                     val dur = ((nextSt - st).coerceAtMost(8)) * STEP_TICKS - 60
@@ -484,7 +535,7 @@ object Arranger {
                     for ((k, n) in notes.withIndex()) pn.add(NoteEvent(i * BAR_TICKS + st * STEP_TICKS + k * spread, dur.coerceAtLeast(120), n, kv((vel(base, gb) + accent - k * 2).coerceIn(20, 127))))
                 }
             }
-            if (follow && sec == Section.CHORUS) {
+            if (follow && isHook(sec)) {
                 for (n in split(melody, bar * BAR_TICKS, (bar + BLOCK_BARS) * BAR_TICKS)) {
                     val pitch = if (n.pitch + 12 <= 96) n.pitch + 12 else n.pitch
                     pn.add(n.copy(pitch = pitch, vel = vel(46, bar + n.start / BAR_TICKS)))
@@ -493,9 +544,9 @@ object Arranger {
             if (pn.isNotEmpty()) pianoClips.add(Clip(nid(), bar, BLOCK_BARS, pn.sortedBy { it.start }))
 
             // Guitar: quạt khi giọng thưa (verse) hoặc nhẹ hơn (chorus); không có ở intro / outro
-            if (mood.guitar && (sec == Section.VERSE || sec == Section.CHORUS)) {
+            if (mood.guitar && (sec == Section.VERSE || isHook(sec))) {
                 val gn = ArrayList<NoteEvent>()
-                val gPat = pickPattern(guitarPatterns, profile, bar, rnd, if (sec == Section.CHORUS) 0.3 else 0.7)
+                val gPat = pickPattern(guitarPatterns, profile, bar, rnd, if (isHook(sec)) 0.3 else 0.7)
                 val gSteps = steps(gPat)
                 for (i in 0 until BLOCK_BARS) {
                     val gb = bar + i
@@ -503,7 +554,7 @@ object Arranger {
                     val chord = Patterns.chordNotes(key, chordAt(gb))
                     val tones = listOf(if (chord[0] - 12 >= 40) chord[0] - 12 else chord[0]) + chord
                     for (st in gSteps) {
-                        val v = (if (sec == Section.CHORUS) 66 else 54) + (if (st % 4 == 0) 4 else -2)
+                        val v = (if (isHook(sec)) 66 else 54) + (if (st % 4 == 0) 4 else -2)
                         tones.forEachIndexed { s, n -> gn.add(NoteEvent(i * BAR_TICKS + st * STEP_TICKS + s * 36, 900, n, kv(vel(v, gb) - s * 3))) }
                     }
                 }
@@ -511,7 +562,7 @@ object Arranger {
             }
 
             // Bass đánh gốc hợp âm của giọng (không ở intro). Rap không có giai điệu: Looper đã có bass nên bass riêng chỉ ở chorus.
-            if (sec != Section.INTRO && sec != Section.PREHOOK && sec != Section.BRIDGE && (follow || sec == Section.CHORUS)) {
+            if (sec != Section.INTRO && sec != Section.PREHOOK && sec != Section.BRIDGE && sec != Section.BUILD && sec != Section.BREAK && (follow || isHook(sec))) {
                 val bn = ArrayList<NoteEvent>()
                 val bPat = pickPattern(bassPatterns, profile, bar, rnd, 0.5)
                 val bSteps = steps(bPat)
@@ -529,10 +580,10 @@ object Arranger {
             }
 
             // Drum pad: clap phách 2 và 4 + crash đầu hook; vòng đệm đẩy hook ở ô cuối của đoạn trước hook
-            val dn = transitionNotes(blk, mood)
-            if (mood.claps && sec == Section.CHORUS) for (i in 0 until BLOCK_BARS) {
-                dn.add(NoteEvent(i * BAR_TICKS + 960, STEP_TICKS, 4, (80 * mood.fx).roundToInt()))        // kClap
-                dn.add(NoteEvent(i * BAR_TICKS + 2880, STEP_TICKS, 4, (80 * mood.fx).roundToInt()))
+            val dn = transitionNotes(blk, mood, fxF)
+            if (mood.claps && isHook(sec)) for (i in 0 until BLOCK_BARS) {
+                dn.add(NoteEvent(i * BAR_TICKS + 960, STEP_TICKS, 4, (80 * fxF).roundToInt()))        // kClap
+                dn.add(NoteEvent(i * BAR_TICKS + 2880, STEP_TICKS, 4, (80 * fxF).roundToInt()))
             }
             if (dn.isNotEmpty()) padClips.add(Clip(nid(), bar, BLOCK_BARS, dn.sortedBy { it.start }))
         }
@@ -556,6 +607,7 @@ object Arranger {
         add(Instrument.ACOUSTIC, "Guitar", 0.36f, 0.25f, guitarClips)
         add(Instrument.BASS, "Bass theo giọng", 0.55f, 0f, bassClips)
         add(Instrument.DRUM_PAD, "Clap & crash", 0.4f, 0f, padClips)
+        add(Instrument.ELECTRIC, "Riser", 0.3f, 0.1f, riserClips)
         return p.copy(tracks = keep + made, nextId = nextId, arrangeGenre = genre.id, arrangeSeed = seed, structure = structure)
     }
 

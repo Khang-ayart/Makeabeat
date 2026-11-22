@@ -894,4 +894,48 @@ class ModelTest {
         assertEquals(com.bandstudio.app.model.Mood.SAD, com.bandstudio.app.model.Mood.of("sad"))
         assertEquals(com.bandstudio.app.model.Mood.AUTO, com.bandstudio.app.model.Mood.of("lạ"))
     }
+
+    @Test
+    fun remixStructureHasBuildDropBreakAndTheArrangementFollowsIt() {
+        val T = com.bandstudio.app.model.SectionType
+        val st = com.bandstudio.app.model.Structure.plan("remix", 96)
+        assertEquals(96, com.bandstudio.app.model.Structure.totalBars(st))
+        assertTrue(st.any { it.type == T.BUILD } && st.any { it.type == T.DROP } && st.any { it.type == T.BREAK })
+        val base = Project("p", "n", bpm = 126, tracks = emptyList(), nextId = 10, keyRoot = 9, minor = true, structure = st)
+        val out = Arranger.arrange(base, Catalog.genre("remix")!!, vocalBars = 12)
+        val starts = com.bandstudio.app.model.Structure.starts(st)
+        val pad = out.tracks.first { it.auto && it.instrument == Instrument.DRUM_PAD }
+        val looper = out.tracks.first { it.auto && it.instrument == Instrument.LOOPER }
+        val riser = out.tracks.first { it.auto && it.name.contains("Riser") }
+        for ((i, s) in st.withIndex()) when (s.type) {
+            T.DROP -> assertTrue("drop cần crash", pad.clips.first { it.startBar == starts[i] }.notes.any { it.start == 0 && it.pitch == 7 })
+            T.BUILD -> {
+                val last = pad.clips.first { it.startBar == starts[i] + s.bars - 4 }
+                val claps = last.notes.filter { it.pitch == 4 }.sortedBy { it.start }
+                assertTrue("build phải dồn clap", claps.size >= 16)
+                assertTrue("clap mạnh dần", claps.last().vel > claps.first().vel)
+                assertTrue("im lặng nửa phách cuối", claps.all { it.start < 3 * BAR_TICKS + 2880 })
+                assertTrue(looper.clips.filter { it.startBar == starts[i] + s.bars - 4 }.all { c -> c.notes.all { it.start < 3 * BAR_TICKS + 2880 } })
+                val rn = riser.clips.first { it.startBar == starts[i] }.notes.sortedBy { it.start }
+                assertTrue("riser lên cao dần", rn.last().pitch > rn.first().pitch)
+            }
+            T.BREAK -> assertTrue("break không kick/snare", looper.clips.filter { it.startBar in starts[i] until starts[i] + s.bars }
+                .all { c -> c.notes.none { n -> n.pitch / PADS_PER_ROW == 0 || n.pitch / PADS_PER_ROW == 1 } })
+            else -> {}
+        }
+    }
+
+    @Test
+    fun valenceSliderScalesDrumsAndSwitchesMoodBands() {
+        val genre = Catalog.genre("melodic")!!
+        fun peak(v: Int): Int {
+            val o = Arranger.arrange(moodBase(com.bandstudio.app.model.Mood.AUTO).copy(valence = v), genre, vocalBars = 12)
+            return o.tracks.first { it.auto && it.instrument == Instrument.LOOPER }.clips.flatMap { it.notes }.maxOf { it.vel }
+        }
+        assertTrue(peak(0) < peak(30) && peak(30) < peak(70) && peak(70) <= peak(100))
+        assertEquals(com.bandstudio.app.model.Mood.SAD, com.bandstudio.app.model.Mood.byValence(10))
+        assertEquals(com.bandstudio.app.model.Mood.HAPPY, com.bandstudio.app.model.Mood.byValence(90))
+        val sad = Arranger.arrange(moodBase(com.bandstudio.app.model.Mood.AUTO).copy(valence = 5), genre, vocalBars = 12)
+        assertTrue(sad.tracks.first { it.auto && it.instrument == Instrument.DRUM_PAD }.clips.flatMap { it.notes }.none { it.pitch == 4 })
+    }
 }

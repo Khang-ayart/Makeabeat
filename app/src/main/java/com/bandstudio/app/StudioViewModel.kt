@@ -1338,7 +1338,13 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         update { it.copy(arrangeGenre = genreId ?: it.arrangeGenre, followMelody = followMelody ?: it.followMelody) }
 
     /** Chọn cảm xúc cho bản phối; buồn / mạnh đặt thang thứ, vui đặt thang trưởng (đổi lại được ở dòng chọn tông). */
-    fun setMood(m: Mood) = update { it.copy(mood = m.id, minor = m.minor ?: it.minor) }
+    fun setMood(m: Mood) = update { it.copy(mood = m.id, valence = if (m == Mood.HYPE) it.valence else Mood.defaultValence(m), minor = m.minor ?: it.minor) }
+
+    /** Thanh trượt Buồn (0) ... Vui (100): đổi nhóm cảm xúc, thang thứ / trưởng ở hai đầu và độ to trống liên tục. */
+    fun setValence(v: Int) = update {
+        val x = v.coerceIn(0, 100)
+        it.copy(valence = x, mood = if (it.mood == Mood.HYPE.id) it.mood else Mood.byValence(x).id, minor = if (x <= 40) true else if (x >= 60) false else it.minor)
+    }
 
     // ---- Cấu trúc & thời lượng ----
 

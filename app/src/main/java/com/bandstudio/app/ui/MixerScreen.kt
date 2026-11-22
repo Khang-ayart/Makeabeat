@@ -84,6 +84,11 @@ fun MixerScreen(vm: StudioViewModel) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     for (m in Mood.entries) ToggleChip(m.label, m.id == project.mood, { vm.setMood(m) })
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Buồn", style = MaterialTheme.typography.labelMedium)
+                    Slider(value = project.valence.toFloat(), onValueChange = { vm.setValence(it.roundToInt()) }, valueRange = 0f..100f, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
+                    Text("Vui", style = MaterialTheme.typography.labelMedium)
+                }
                 Text(Mood.of(project.mood).hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Thể loại", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
@@ -91,6 +96,7 @@ fun MixerScreen(vm: StudioViewModel) {
                         ToggleChip("${g.label} · ${g.bpm}", g.id == project.arrangeGenre, {
                             vm.setArrangeOptions(genreId = g.id)
                             vm.setBpm(g.bpm)  // mỗi thể loại có BPM gợi ý; muốn khác thì chỉnh lại ở trên
+                            if (g.id == "remix") vm.setStructurePreset("remix")  // remix: intro, verse, build-up, drop, break...
                         })
                     }
                 }

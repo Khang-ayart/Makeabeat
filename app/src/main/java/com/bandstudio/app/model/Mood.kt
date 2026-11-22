@@ -48,5 +48,16 @@ enum class Mood(
 
     companion object {
         fun of(id: String): Mood = entries.firstOrNull { it.id == id } ?: AUTO
+
+        /** Nhóm cảm xúc ứng với vị trí thanh trượt Buồn...Vui (0..100). */
+        fun byValence(v: Int): Mood = when {
+            v < 25 -> SAD
+            v < 50 -> CHILL
+            v < 75 -> AUTO
+            else -> HAPPY
+        }
+
+        /** Vị trí thanh trượt khi chọn nhanh một cảm xúc. */
+        fun defaultValence(m: Mood): Int = when (m) { SAD -> 10; CHILL -> 38; HAPPY -> 90; else -> 50 }
     }
 }
